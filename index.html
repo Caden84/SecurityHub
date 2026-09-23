@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>PanelPath — Michigan v1</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header no-print">
+    <div class="brand">
+      <h1>PanelPath</h1>
+      <span class="badge">Michigan v1</span>
+    </div>
+    <p class="tagline">Fire / security decision support for MI sales reps</p>
+  </header>
+
+  <main id="app">
+    <!-- SCREEN 1: Intake -->
+    <section id="screen-1" class="screen" aria-labelledby="s1-title">
+      <h2 id="s1-title" class="screen-title">Screen 1 — Intake</h2>
+      <form id="intake-form" novalidate>
+        <fieldset>
+          <legend>Job</legend>
+          <div class="radio-row" role="radiogroup" aria-required="true">
+            <label class="chip"><input type="radio" name="job" value="new" required /> New</label>
+            <label class="chip"><input type="radio" name="job" value="replace" /> Replace</label>
+            <label class="chip"><input type="radio" name="job" value="add-on" /> Add-on</label>
+          </div>
+        </fieldset>
+
+        <label class="field">
+          <span>Existing panel <em>(optional)</em></span>
+          <input type="text" name="existingPanel" placeholder="e.g. old 20P, FACP model…" autocomplete="off" />
+        </label>
+
+        <fieldset>
+          <legend>AHJ</legend>
+          <div class="radio-row">
+            <label class="chip"><input type="radio" name="ahj" value="city" /> City</label>
+            <label class="chip"><input type="radio" name="ahj" value="township" /> Township</label>
+            <label class="chip"><input type="radio" name="ahj" value="state-fire" /> State fire</label>
+            <label class="chip"><input type="radio" name="ahj" value="unknown" checked /> Unknown</label>
+          </div>
+        </fieldset>
+
+        <label class="field">
+          <span>Occupancy <em>(required)</em></span>
+          <select name="occupancy" required>
+            <option value="">Select…</option>
+            <option value="business">Business</option>
+            <option value="mercantile">Mercantile</option>
+            <option value="assembly">Assembly</option>
+            <option value="education">Education</option>
+            <option value="apartments">Apartments</option>
+            <option value="storage">Storage</option>
+            <option value="factory">Factory</option>
+            <option value="healthcare">Healthcare</option>
+            <option value="mixed">Mixed</option>
+          </select>
+        </label>
+
+        <div class="row-2">
+          <label class="field">
+            <span>Stories</span>
+            <input type="number" name="stories" min="1" step="1" value="1" />
+          </label>
+          <label class="check-field">
+            <input type="checkbox" name="highRise75" />
+            <span>Occupied floor more than 75 ft above fire department access</span>
+          </label>
+        </div>
+
+        <label class="field">
+          <span>Approx sq ft <em>(required)</em></span>
+          <input type="number" name="sqFt" min="1" step="1" required placeholder="e.g. 8000" />
+        </label>
+
+        <fieldset>
+          <legend>Sprinklered</legend>
+          <div class="radio-row">
+            <label class="chip"><input type="radio" name="sprinklered" value="yes" /> Yes</label>
+            <label class="chip"><input type="radio" name="sprinklered" value="no" /> No</label>
+            <label class="chip"><input type="radio" name="sprinklered" value="partial" /> Partial</label>
+            <label class="chip"><input type="radio" name="sprinklered" value="unknown" checked /> Unknown</label>
+          </div>
+        </fieldset>
+
+        <label class="field">
+          <span>Occupant load <em>(optional)</em></span>
+          <input type="number" name="occupantLoad" min="0" step="1" placeholder="e.g. 250" />
+        </label>
+
+        <fieldset>
+          <legend>System <em>(required)</em></legend>
+          <div class="radio-row" role="radiogroup">
+            <label class="chip"><input type="radio" name="system" value="fire" required /> Fire</label>
+            <label class="chip"><input type="radio" name="system" value="burg" /> Burg</label>
+            <label class="chip"><input type="radio" name="system" value="both" /> Both</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Monitoring</legend>
+          <div class="radio-row">
+            <label class="chip"><input type="radio" name="monitoring" value="yes" /> Yes</label>
+            <label class="chip"><input type="radio" name="monitoring" value="no" /> No</label>
+            <label class="chip"><input type="radio" name="monitoring" value="unknown" checked /> Unknown</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Voice evac</legend>
+          <div class="radio-row">
+            <label class="chip"><input type="radio" name="voice" value="already" /> Already there</label>
+            <label class="chip"><input type="radio" name="voice" value="required" /> Required</label>
+            <label class="chip"><input type="radio" name="voice" value="unknown" checked /> Unknown</label>
+            <label class="chip"><input type="radio" name="voice" value="none" /> None</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Elevators</legend>
+          <div class="radio-row">
+            <label class="chip"><input type="radio" name="elevators" value="none" checked /> None</label>
+            <label class="chip"><input type="radio" name="elevators" value="1" /> 1 bank</label>
+            <label class="chip"><input type="radio" name="elevators" value="2+" /> 2+ banks</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Manufacturer lock</legend>
+          <div class="radio-row wrap">
+            <label class="chip"><input type="radio" name="mfrLock" value="none" checked /> None</label>
+            <label class="chip"><input type="radio" name="mfrLock" value="Notifier" /> Notifier</label>
+            <label class="chip"><input type="radio" name="mfrLock" value="FireWarden" /> FireWarden</label>
+            <label class="chip"><input type="radio" name="mfrLock" value="Vista" /> Vista</label>
+            <label class="chip"><input type="radio" name="mfrLock" value="Simplex" /> Simplex</label>
+            <label class="chip"><input type="radio" name="mfrLock" value="other" /> Other</label>
+          </div>
+        </fieldset>
+
+        <label class="field">
+          <span>Rep markup %</span>
+          <input type="number" name="markup" min="0" step="1" value="40" />
+        </label>
+
+        <label class="field">
+          <span>Notes</span>
+          <textarea name="notes" rows="3" placeholder="Site notes, AHJ quirks…"></textarea>
+        </label>
+
+        <p id="intake-error" class="error" hidden></p>
+
+        <div class="actions no-print">
+          <button type="submit" class="btn btn-primary" id="btn-continue">Continue →</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- SCREEN 2: Results -->
+    <section id="screen-2" class="screen" hidden aria-labelledby="s2-title">
+      <h2 id="s2-title" class="screen-title">Screen 2 — Results</h2>
+
+      <div class="disclaimer-banner" role="note">
+        Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.
+      </div>
+
+      <div id="flags" class="flags" aria-live="polite"></div>
+      <p id="occ-flag" class="occ-flag" hidden></p>
+
+      <div id="options" class="options"></div>
+
+      <h3 class="subhead">Device counts <span class="est-label">ESTIMATE</span></h3>
+      <ul id="device-counts" class="device-counts"></ul>
+
+      <h3 class="subhead">Price block</h3>
+      <p class="hint">Unit costs stay empty — you fill them. No list prices invented.</p>
+      <div class="price-wrap">
+        <table class="price-table" id="price-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>Unit $</th>
+              <th>Extended</th>
+            </tr>
+          </thead>
+          <tbody id="price-body"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3">
+                <label class="inline-markup">
+                  Markup %
+                  <input type="number" id="markup-live" min="0" step="1" />
+                </label>
+              </td>
+              <td id="price-total" class="total">$0.00</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <h3 class="subhead">External tools</h3>
+      <div class="tool-btns no-print">
+        <a class="btn btn-secondary" href="https://buildings.honeywell.com/us/en/solutions/fire/clss/tool-suite" target="_blank" rel="noopener noreferrer">Honeywell CLSS Tool Suite</a>
+        <a class="btn btn-secondary" href="https://digital-watchdog.com/page/calculator/" target="_blank" rel="noopener noreferrer">Digital Watchdog calculators</a>
+        <button type="button" class="btn btn-secondary" id="btn-exact-vision">Exact Vision calculator</button>
+      </div>
+      <p id="exact-vision-msg" class="hint" hidden>paste dealer URL later</p>
+
+      <div class="actions no-print">
+        <button type="button" class="btn btn-ghost" id="btn-back-intake">← Back to Intake</button>
+        <button type="button" class="btn btn-primary" id="btn-summary">View summary →</button>
+      </div>
+    </section>
+
+    <!-- SCREEN 3: Summary -->
+    <section id="screen-3" class="screen" hidden aria-labelledby="s3-title">
+      <h2 id="s3-title" class="screen-title">Screen 3 — Summary</h2>
+
+      <div class="disclaimer-banner" role="note">
+        Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.
+      </div>
+
+      <div class="actions no-print summary-actions">
+        <button type="button" class="btn btn-ghost" id="btn-back-results">← Back to Results</button>
+        <button type="button" class="btn btn-primary" id="btn-print">Print</button>
+      </div>
+
+      <article id="summary-sheet" class="summary-sheet">
+        <header class="summary-header">
+          <h3>PanelPath — Job summary</h3>
+          <span class="badge">Michigan v1</span>
+        </header>
+        <div id="summary-body"></div>
+        <footer class="summary-footer disclaimer-footer">
+          Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.
+        </footer>
+      </article>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
