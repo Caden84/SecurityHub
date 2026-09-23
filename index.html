@@ -20,135 +20,236 @@
     <section id="screen-1" class="screen" aria-labelledby="s1-title">
       <h2 id="s1-title" class="screen-title">Screen 1 — Intake</h2>
       <form id="intake-form" novalidate>
-        <fieldset>
-          <legend>Job</legend>
+        <!-- TOP OF INTAKE: job scale / scope / prints -->
+        <fieldset class="gate-fieldset">
+          <legend>Job scale <em>(required)</em></legend>
           <div class="radio-row" role="radiogroup" aria-required="true">
-            <label class="chip"><input type="radio" name="job" value="new" required /> New</label>
-            <label class="chip"><input type="radio" name="job" value="replace" /> Replace</label>
-            <label class="chip"><input type="radio" name="job" value="add-on" /> Add-on</label>
+            <label class="chip"><input type="radio" name="jobScale" value="residential" required /> Residential</label>
+            <label class="chip"><input type="radio" name="jobScale" value="commercial" /> Commercial</label>
           </div>
         </fieldset>
 
-        <label class="field">
-          <span>Existing panel <em>(optional)</em></span>
-          <input type="text" name="existingPanel" placeholder="e.g. old 20P, FACP model…" autocomplete="off" />
-        </label>
-
-        <fieldset>
-          <legend>AHJ</legend>
-          <div class="radio-row">
-            <label class="chip"><input type="radio" name="ahj" value="city" /> City</label>
-            <label class="chip"><input type="radio" name="ahj" value="township" /> Township</label>
-            <label class="chip"><input type="radio" name="ahj" value="state-fire" /> State fire</label>
-            <label class="chip"><input type="radio" name="ahj" value="unknown" checked /> Unknown</label>
+        <fieldset class="gate-fieldset">
+          <legend>Scope <em>(required)</em></legend>
+          <div class="radio-row wrap" role="radiogroup" aria-required="true">
+            <label class="chip"><input type="radio" name="scope" value="turnkey" required /> Turnkey (we pull wire + devices + program)</label>
+            <label class="chip"><input type="radio" name="scope" value="check-and-test" /> Check-and-test only (electrician installs; we program, test, certify)</label>
           </div>
         </fieldset>
 
-        <label class="field">
-          <span>Occupancy <em>(required)</em></span>
-          <select name="occupancy" required>
-            <option value="">Select…</option>
-            <option value="business">Business</option>
-            <option value="mercantile">Mercantile</option>
-            <option value="assembly">Assembly</option>
-            <option value="education">Education</option>
-            <option value="apartments">Apartments</option>
-            <option value="storage">Storage</option>
-            <option value="factory">Factory</option>
-            <option value="healthcare">Healthcare</option>
-            <option value="mixed">Mixed</option>
-          </select>
-        </label>
+        <fieldset class="gate-fieldset">
+          <legend>Prints <em>(required)</em></legend>
+          <div class="radio-row" role="radiogroup" aria-required="true">
+            <label class="chip"><input type="radio" name="prints" value="have" required /> I have drawings</label>
+            <label class="chip"><input type="radio" name="prints" value="none" /> I do not have drawings</label>
+          </div>
+        </fieldset>
 
-        <div class="row-2">
+        <div id="intake-body" class="intake-body" hidden>
+          <fieldset>
+            <legend>Job</legend>
+            <div class="radio-row" role="radiogroup" aria-required="true">
+              <label class="chip"><input type="radio" name="job" value="new" /> New</label>
+              <label class="chip"><input type="radio" name="job" value="replace" /> Replace</label>
+              <label class="chip"><input type="radio" name="job" value="add-on" /> Add-on</label>
+            </div>
+          </fieldset>
+
           <label class="field">
-            <span>Stories</span>
-            <input type="number" name="stories" min="1" step="1" value="1" />
+            <span>Existing panel <em>(optional)</em></span>
+            <input type="text" name="existingPanel" placeholder="e.g. old 20P, FACP model…" autocomplete="off" />
           </label>
-          <label class="check-field">
-            <input type="checkbox" name="highRise75" />
-            <span>Occupied floor more than 75 ft above fire department access</span>
+
+          <fieldset>
+            <legend>AHJ</legend>
+            <div class="radio-row">
+              <label class="chip"><input type="radio" name="ahj" value="city" /> City</label>
+              <label class="chip"><input type="radio" name="ahj" value="township" /> Township</label>
+              <label class="chip"><input type="radio" name="ahj" value="state-fire" /> State fire</label>
+              <label class="chip"><input type="radio" name="ahj" value="unknown" checked /> Unknown</label>
+            </div>
+          </fieldset>
+
+          <!-- RESIDENTIAL branch -->
+          <div id="residential-fields" class="branch-block" hidden>
+            <h3 class="branch-title">Residential</h3>
+
+            <div class="row-2">
+              <label class="field">
+                <span>Stories</span>
+                <input type="number" name="resStories" min="1" step="1" value="1" />
+              </label>
+              <label class="field">
+                <span>Bedrooms</span>
+                <input type="number" name="bedrooms" min="0" step="1" value="3" />
+              </label>
+            </div>
+
+            <fieldset>
+              <legend>Basement</legend>
+              <div class="radio-row">
+                <label class="chip"><input type="radio" name="basement" value="yes" /> Yes</label>
+                <label class="chip"><input type="radio" name="basement" value="no" checked /> No</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Existing detectors</legend>
+              <div class="radio-row">
+                <label class="chip"><input type="radio" name="existingDetectors" value="yes" /> Yes</label>
+                <label class="chip"><input type="radio" name="existingDetectors" value="no" checked /> No</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Interconnected</legend>
+              <div class="radio-row">
+                <label class="chip"><input type="radio" name="interconnected" value="yes" /> Yes</label>
+                <label class="chip"><input type="radio" name="interconnected" value="no" checked /> No</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Power / backup</legend>
+              <div class="radio-row wrap">
+                <label class="chip"><input type="radio" name="detectorPower" value="hardwired" checked /> Hardwired 120V with battery backup</label>
+                <label class="chip"><input type="radio" name="detectorPower" value="battery" /> Battery-only</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>CO required</legend>
+              <div class="radio-row">
+                <label class="chip"><input type="radio" name="coRequired" value="unknown" checked /> Unknown</label>
+                <label class="chip"><input type="radio" name="coRequired" value="yes" /> Yes</label>
+                <label class="chip"><input type="radio" name="coRequired" value="no" /> No</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Control panel system</legend>
+              <p class="hint">Detector strategy always. Panel A/B/C only if not “None”.</p>
+              <div class="radio-row wrap">
+                <label class="chip"><input type="radio" name="resSystem" value="none" checked /> None (detectors only)</label>
+                <label class="chip"><input type="radio" name="resSystem" value="fire" /> Fire</label>
+                <label class="chip"><input type="radio" name="resSystem" value="burg" /> Burg</label>
+                <label class="chip"><input type="radio" name="resSystem" value="both" /> Both</label>
+              </div>
+            </fieldset>
+          </div>
+
+          <!-- COMMERCIAL branch -->
+          <div id="commercial-fields" class="branch-block" hidden>
+            <h3 class="branch-title">Commercial</h3>
+
+            <label class="field">
+              <span>Occupancy <em>(required)</em></span>
+              <select name="occupancy">
+                <option value="">Select…</option>
+                <option value="business">Business</option>
+                <option value="mercantile">Mercantile</option>
+                <option value="assembly">Assembly</option>
+                <option value="education">Education</option>
+                <option value="apartments">Apartments</option>
+                <option value="storage">Storage</option>
+                <option value="factory">Factory</option>
+                <option value="healthcare">Healthcare</option>
+                <option value="mixed">Mixed</option>
+              </select>
+            </label>
+
+            <div class="row-2">
+              <label class="field">
+                <span>Stories</span>
+                <input type="number" name="stories" min="1" step="1" value="1" />
+              </label>
+              <label class="check-field">
+                <input type="checkbox" name="highRise75" />
+                <span>Occupied floor more than 75 ft above fire department access</span>
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Approx sq ft <em>(required when prints available)</em></span>
+              <input type="number" name="sqFt" min="1" step="1" placeholder="e.g. 8000" />
+            </label>
+
+            <fieldset>
+              <legend>Sprinklered</legend>
+              <div class="radio-row">
+                <label class="chip"><input type="radio" name="sprinklered" value="yes" /> Yes</label>
+                <label class="chip"><input type="radio" name="sprinklered" value="no" /> No</label>
+                <label class="chip"><input type="radio" name="sprinklered" value="partial" /> Partial</label>
+                <label class="chip"><input type="radio" name="sprinklered" value="unknown" checked /> Unknown</label>
+              </div>
+            </fieldset>
+
+            <label class="field">
+              <span>Occupant load <em>(optional)</em></span>
+              <input type="number" name="occupantLoad" min="0" step="1" placeholder="e.g. 250" />
+            </label>
+
+            <fieldset>
+              <legend>System <em>(required)</em></legend>
+              <div class="radio-row" role="radiogroup">
+                <label class="chip"><input type="radio" name="system" value="fire" /> Fire</label>
+                <label class="chip"><input type="radio" name="system" value="burg" /> Burg</label>
+                <label class="chip"><input type="radio" name="system" value="both" /> Both</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Monitoring</legend>
+              <div class="radio-row">
+                <label class="chip"><input type="radio" name="monitoring" value="yes" /> Yes</label>
+                <label class="chip"><input type="radio" name="monitoring" value="no" /> No</label>
+                <label class="chip"><input type="radio" name="monitoring" value="unknown" checked /> Unknown</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Voice evac</legend>
+              <div class="radio-row">
+                <label class="chip"><input type="radio" name="voice" value="already" /> Already there</label>
+                <label class="chip"><input type="radio" name="voice" value="required" /> Required</label>
+                <label class="chip"><input type="radio" name="voice" value="unknown" checked /> Unknown</label>
+                <label class="chip"><input type="radio" name="voice" value="none" /> None</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Elevators</legend>
+              <div class="radio-row">
+                <label class="chip"><input type="radio" name="elevators" value="none" checked /> None</label>
+                <label class="chip"><input type="radio" name="elevators" value="1" /> 1 bank</label>
+                <label class="chip"><input type="radio" name="elevators" value="2+" /> 2+ banks</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Manufacturer lock</legend>
+              <div class="radio-row wrap">
+                <label class="chip"><input type="radio" name="mfrLock" value="none" checked /> None</label>
+                <label class="chip"><input type="radio" name="mfrLock" value="Notifier" /> Notifier</label>
+                <label class="chip"><input type="radio" name="mfrLock" value="FireWarden" /> FireWarden</label>
+                <label class="chip"><input type="radio" name="mfrLock" value="Vista" /> Vista</label>
+                <label class="chip"><input type="radio" name="mfrLock" value="Simplex" /> Simplex</label>
+                <label class="chip"><input type="radio" name="mfrLock" value="other" /> Other</label>
+              </div>
+            </fieldset>
+          </div>
+
+          <!-- Shared: markup + notes -->
+          <label class="field">
+            <span>Rep markup %</span>
+            <input type="number" name="markup" min="0" step="1" value="40" />
+          </label>
+
+          <label class="field">
+            <span>Notes</span>
+            <textarea name="notes" rows="3" placeholder="Site notes, AHJ quirks…"></textarea>
           </label>
         </div>
-
-        <label class="field">
-          <span>Approx sq ft <em>(required)</em></span>
-          <input type="number" name="sqFt" min="1" step="1" required placeholder="e.g. 8000" />
-        </label>
-
-        <fieldset>
-          <legend>Sprinklered</legend>
-          <div class="radio-row">
-            <label class="chip"><input type="radio" name="sprinklered" value="yes" /> Yes</label>
-            <label class="chip"><input type="radio" name="sprinklered" value="no" /> No</label>
-            <label class="chip"><input type="radio" name="sprinklered" value="partial" /> Partial</label>
-            <label class="chip"><input type="radio" name="sprinklered" value="unknown" checked /> Unknown</label>
-          </div>
-        </fieldset>
-
-        <label class="field">
-          <span>Occupant load <em>(optional)</em></span>
-          <input type="number" name="occupantLoad" min="0" step="1" placeholder="e.g. 250" />
-        </label>
-
-        <fieldset>
-          <legend>System <em>(required)</em></legend>
-          <div class="radio-row" role="radiogroup">
-            <label class="chip"><input type="radio" name="system" value="fire" required /> Fire</label>
-            <label class="chip"><input type="radio" name="system" value="burg" /> Burg</label>
-            <label class="chip"><input type="radio" name="system" value="both" /> Both</label>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Monitoring</legend>
-          <div class="radio-row">
-            <label class="chip"><input type="radio" name="monitoring" value="yes" /> Yes</label>
-            <label class="chip"><input type="radio" name="monitoring" value="no" /> No</label>
-            <label class="chip"><input type="radio" name="monitoring" value="unknown" checked /> Unknown</label>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Voice evac</legend>
-          <div class="radio-row">
-            <label class="chip"><input type="radio" name="voice" value="already" /> Already there</label>
-            <label class="chip"><input type="radio" name="voice" value="required" /> Required</label>
-            <label class="chip"><input type="radio" name="voice" value="unknown" checked /> Unknown</label>
-            <label class="chip"><input type="radio" name="voice" value="none" /> None</label>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Elevators</legend>
-          <div class="radio-row">
-            <label class="chip"><input type="radio" name="elevators" value="none" checked /> None</label>
-            <label class="chip"><input type="radio" name="elevators" value="1" /> 1 bank</label>
-            <label class="chip"><input type="radio" name="elevators" value="2+" /> 2+ banks</label>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Manufacturer lock</legend>
-          <div class="radio-row wrap">
-            <label class="chip"><input type="radio" name="mfrLock" value="none" checked /> None</label>
-            <label class="chip"><input type="radio" name="mfrLock" value="Notifier" /> Notifier</label>
-            <label class="chip"><input type="radio" name="mfrLock" value="FireWarden" /> FireWarden</label>
-            <label class="chip"><input type="radio" name="mfrLock" value="Vista" /> Vista</label>
-            <label class="chip"><input type="radio" name="mfrLock" value="Simplex" /> Simplex</label>
-            <label class="chip"><input type="radio" name="mfrLock" value="other" /> Other</label>
-          </div>
-        </fieldset>
-
-        <label class="field">
-          <span>Rep markup %</span>
-          <input type="number" name="markup" min="0" step="1" value="40" />
-        </label>
-
-        <label class="field">
-          <span>Notes</span>
-          <textarea name="notes" rows="3" placeholder="Site notes, AHJ quirks…"></textarea>
-        </label>
 
         <p id="intake-error" class="error" hidden></p>
 
@@ -166,52 +267,140 @@
         Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.
       </div>
 
-      <div id="flags" class="flags" aria-live="polite"></div>
-      <p id="occ-flag" class="occ-flag" hidden></p>
-
-      <div id="options" class="options"></div>
-
-      <h3 class="subhead">Device counts <span class="est-label">ESTIMATE</span></h3>
-      <ul id="device-counts" class="device-counts"></ul>
-
-      <h3 class="subhead">Price block</h3>
-      <p class="hint">Unit costs stay empty — you fill them. No list prices invented.</p>
-      <div class="price-wrap">
-        <table class="price-table" id="price-table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Qty</th>
-              <th>Unit $</th>
-              <th>Extended</th>
-            </tr>
-          </thead>
-          <tbody id="price-body"></tbody>
-          <tfoot>
-            <tr>
-              <td colspan="3">
-                <label class="inline-markup">
-                  Markup %
-                  <input type="number" id="markup-live" min="0" step="1" />
-                </label>
-              </td>
-              <td id="price-total" class="total">$0.00</td>
-            </tr>
-          </tfoot>
-        </table>
+      <!-- Hard stop for commercial no-prints (or residential warning) -->
+      <div id="hard-stop" class="hard-stop-card" hidden>
+        <h3>Need floor plan / prints before markup or device counts you can bid.</h3>
+        <p>Ask the sales rep: bedrooms, stories, basement, existing smokes, interconnected?, hardwired or battery, AHJ.</p>
+        <label class="field">
+          <span>Copy-paste for the customer / GC</span>
+          <textarea id="hard-stop-msg" readonly rows="3">I can price this once I have prints (or a simple floor sketch with rooms labeled). Without that I’m guessing and the bid will be wrong.</textarea>
+        </label>
+        <div class="actions">
+          <button type="button" class="btn btn-secondary" id="btn-copy-hardstop">Copy message</button>
+          <button type="button" class="btn btn-ghost" id="btn-hardstop-back">← Back to Intake</button>
+        </div>
+        <p id="copy-toast" class="hint" hidden>Copied.</p>
       </div>
 
-      <h3 class="subhead">External tools</h3>
-      <div class="tool-btns no-print">
-        <a class="btn btn-secondary" href="https://buildings.honeywell.com/us/en/solutions/fire/clss/tool-suite" target="_blank" rel="noopener noreferrer">Honeywell CLSS Tool Suite</a>
-        <a class="btn btn-secondary" href="https://digital-watchdog.com/page/calculator/" target="_blank" rel="noopener noreferrer">Digital Watchdog calculators</a>
-        <button type="button" class="btn btn-secondary" id="btn-exact-vision">Exact Vision calculator</button>
-      </div>
-      <p id="exact-vision-msg" class="hint" hidden>paste dealer URL later</p>
+      <div id="results-main">
+        <div id="flags" class="flags" aria-live="polite"></div>
+        <p id="occ-flag" class="occ-flag" hidden></p>
+        <p id="spec-code-warn" class="spec-code-warn" hidden></p>
 
-      <div class="actions no-print">
-        <button type="button" class="btn btn-ghost" id="btn-back-intake">← Back to Intake</button>
-        <button type="button" class="btn btn-primary" id="btn-summary">View summary →</button>
+        <div id="detector-strategy-block" hidden>
+          <h3 class="subhead">Detector strategy <span class="est-label">ESTIMATE / confirm with AHJ and Michigan residential rules</span></h3>
+          <div id="detector-options" class="options"></div>
+        </div>
+
+        <div id="panel-options-block">
+          <h3 class="subhead" id="panel-options-title">Panel options</h3>
+          <div id="options" class="options"></div>
+        </div>
+
+        <div id="spec-code-block" class="spec-code-cols" hidden>
+          <h3 class="subhead">Spec vs code</h3>
+          <div class="two-col">
+            <article class="path-card">
+              <h4>Spec path</h4>
+              <ul>
+                <li>Follow drawings / horns as drawn</li>
+                <li>Bid the notification devices shown on the print</li>
+                <li>Document that this may not match MI/IBC voice path</li>
+              </ul>
+            </article>
+            <article class="path-card path-card-code">
+              <h4>Code-corrected path</h4>
+              <ul>
+                <li>Voice / evac path per MI / IBC</li>
+                <li>Align with rule 3 when voice, high-rise, or large assembly</li>
+                <li>Show both prices so the customer sees the risk</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+
+        <div id="device-section">
+          <h3 class="subhead">Device counts <span class="est-label" id="device-est-label">ESTIMATE</span></h3>
+          <p id="device-by-others" class="hint" hidden>Devices by others (electrician) — check-and-test scope.</p>
+          <ul id="device-counts" class="device-counts"></ul>
+          <div id="res-checklist" class="res-checklist" hidden></div>
+        </div>
+
+        <h3 class="subhead">Price block</h3>
+        <p class="hint" id="price-hint">Unit costs stay empty — you fill them. No list prices invented.</p>
+
+        <div id="price-single" class="price-wrap">
+          <table class="price-table" id="price-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Unit $</th>
+                <th>Extended</th>
+              </tr>
+            </thead>
+            <tbody id="price-body"></tbody>
+            <tfoot>
+              <tr>
+                <td colspan="3">
+                  <label class="inline-markup">
+                    Markup %
+                    <input type="number" id="markup-live" min="0" step="1" />
+                  </label>
+                </td>
+                <td id="price-total" class="total">$0.00</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div id="price-dual" class="price-dual" hidden>
+          <div class="two-col">
+            <div class="price-wrap">
+              <h4 class="price-path-label">Spec path — totals</h4>
+              <table class="price-table" id="price-table-spec">
+                <thead>
+                  <tr><th>Item</th><th>Qty</th><th>Unit $</th><th>Extended</th></tr>
+                </thead>
+                <tbody id="price-body-spec"></tbody>
+                <tfoot>
+                  <tr>
+                    <td colspan="3">Markup % <input type="number" id="markup-live-spec" class="inline-num" min="0" step="1" /></td>
+                    <td id="price-total-spec" class="total">$0.00</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <div class="price-wrap">
+              <h4 class="price-path-label">Code-corrected — totals</h4>
+              <table class="price-table" id="price-table-code">
+                <thead>
+                  <tr><th>Item</th><th>Qty</th><th>Unit $</th><th>Extended</th></tr>
+                </thead>
+                <tbody id="price-body-code"></tbody>
+                <tfoot>
+                  <tr>
+                    <td colspan="3">Markup % <input type="number" id="markup-live-code" class="inline-num" min="0" step="1" /></td>
+                    <td id="price-total-code" class="total">$0.00</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="subhead">External tools</h3>
+        <div class="tool-btns no-print">
+          <a class="btn btn-secondary" href="https://buildings.honeywell.com/us/en/solutions/fire/clss/tool-suite" target="_blank" rel="noopener noreferrer">Honeywell CLSS Tool Suite</a>
+          <a class="btn btn-secondary" href="https://digital-watchdog.com/page/calculator/" target="_blank" rel="noopener noreferrer">Digital Watchdog calculators</a>
+          <button type="button" class="btn btn-secondary" id="btn-exact-vision">Exact Vision calculator</button>
+        </div>
+        <p id="exact-vision-msg" class="hint" hidden>paste dealer URL later</p>
+
+        <div class="actions no-print">
+          <button type="button" class="btn btn-ghost" id="btn-back-intake">← Back to Intake</button>
+          <button type="button" class="btn btn-primary" id="btn-summary">View summary →</button>
+        </div>
       </div>
     </section>
 

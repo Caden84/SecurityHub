@@ -595,3 +595,156 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
   }
   .disclaimer-footer { color: #333; }
 }
+
+/* ---- Gate / branch ---- */
+.gate-fieldset {
+  border-color: var(--amber-dim);
+  background: linear-gradient(180deg, var(--amber-bg), var(--bg-elev));
+}
+
+.intake-body[hidden],
+.branch-block[hidden] {
+  display: none !important;
+}
+
+.branch-title {
+  margin: 0.25rem 0 1rem;
+  font-size: 1.05rem;
+  color: var(--amber);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.35rem;
+}
+
+/* ---- Hard-stop card (amber border, distinct) ---- */
+.hard-stop-card {
+  background: var(--amber-bg);
+  border: 2px solid var(--amber);
+  border-radius: var(--radius);
+  padding: 1.15rem 1.25rem 1.25rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.08);
+}
+
+.hard-stop-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+  color: var(--amber);
+  line-height: 1.35;
+}
+
+.hard-stop-card p {
+  margin: 0 0 0.85rem;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.hard-stop-card textarea[readonly] {
+  background: var(--bg);
+  border-color: var(--amber-dim);
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: text;
+}
+
+/* ---- Spec vs code warning + two columns ---- */
+.spec-code-warn {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 107, 74, 0.12);
+  border: 1px solid var(--danger);
+  border-left: 4px solid var(--danger);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.two-col {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .two-col {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.path-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+}
+
+.path-card h4 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.path-card-code {
+  border-color: var(--amber-dim);
+  background: var(--amber-bg);
+}
+
+.path-card-code h4 {
+  color: var(--amber);
+}
+
+.path-card ul {
+  margin: 0;
+  padding-left: 1.15rem;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.path-card li { margin-bottom: 0.35rem; }
+
+.price-path-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  color: var(--amber);
+}
+
+.price-dual .inline-num {
+  max-width: 72px;
+  min-height: 36px;
+  margin-left: 0.35rem;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.res-checklist {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  margin-top: 0.5rem;
+}
+
+.res-checklist ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+
+.res-checklist li { margin-bottom: 0.35rem; }
+
+.summary-cols {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.summary-cols ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.15rem;
+}
+
+#results-main[hidden] {
+  display: none !important;
+}
+
+main {
+  max-width: 860px;
+}
