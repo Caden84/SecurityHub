@@ -20,16 +20,19 @@ You can also open `index.html` directly via `file://` — sessionStorage and all
 
 ## Files
 
-- `index.html` — three screens (Intake → Results → Summary)
+- `index.html` — screens: Intake → Results → Takeoff → Summary
 - `styles.css` — dark shop-floor UI, amber accents, print styles
-- `app.js` — intake gates, residential/commercial branches, recommendations, pricing
+- `app.js` — gates, hard stops, prints quality, ceiling/lift, takeoff, pricing
 
 ## Product notes
 
-- Top of intake: **Job scale**, **Scope**, **Prints** (required). Rest of form shows after those are set.
-- **Commercial + no prints** → hard stop only (copy-paste message). No panel A/B/C, no bid device counts.
-- **Residential + no prints** → hard-stop warning + residential questions + detector strategy A/B/C. No fake floor plan. Panel A/B/C only if control panel system is fire/burg/both.
-- **Check-and-test** scope → Program / Test / Certification labor rows only.
-- **Spec vs code** columns when education/assembly/healthcare, voice required, or high-rise.
+- Top of intake: **Job scale**, **Scope**, **Prints** (required).
+- **Job class** (new / add-on / takeover / replacement). Add-on/takeover/replacement require “devices marked on the print.”
+- **Commercial hard stops** (block panel A/B/C): no prints; occupant load unknown; devices not on print; missing/unreadable upload.
+- **Year built + hazards**; pre-1980 + “none known” → yellow flag (not a hard stop).
+- **Ceiling height + Lift** required on commercial and residential stories ≥ 2.
+- **Prints upload** (PDF/image) + quality gate + manual device checklist. Auto-read disabled.
+- **Takeoff** after Results: device + wire lines, searchable starter catalog, sessionStorage persist.
+- **Check-and-test**: labor on Results; devices/wire still on Takeoff labeled electrician furnish.
 - Unit cost fields stay empty — no invented list prices.
-- Disclaimer on Screen 2 banner and Screen 3 banner + footer.
+- Disclaimer on Results / Takeoff / Summary.

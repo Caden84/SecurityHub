@@ -3,47 +3,67 @@
  * Static decision-support for fire/security sales reps.
  * No invented list prices. No backend. No fake floor plans.
  *
- * =============================================================================
- * RECOMMENDATION HEURISTICS (commercial panel A/B/C)
- * =============================================================================
- * highRise     = 75 ft checkbox (occupied floor > 75 ft above FD access)
- * voiceLikely  = voice is "already there" OR "required"
- *                OR highRise
- *                OR (occupancy === assembly AND (sqFt > 12000 OR occupantLoad > 300))
- * largeAssembly = occupancy === assembly AND (sqFt > 12000 OR occupantLoad > 300)
- * smallCommercial = occupancy NOT in healthcare/education
- *                   AND !highRise AND !largeAssembly AND sqFt <= 20000
+ * Commercial hard stops (block A/B/C):
+ *   - no prints
+ *   - occupant load unknown
+ *   - add-on/takeover/replacement without devices marked on print
+ *   - has prints but no upload / not readable / quality reject
  *
- * Rule priority:
- *   if voiceLikely || highRise || largeAssembly → rule 3
- *   else if system includes fire (fire|both)    → rule 2
- *   else                                        → rule 1
- *
- * Residential: ALWAYS show detector strategy A/B/C.
- * Panel A/B/C only when resSystem is fire|burg|both (not none).
- *
- * Prints gate:
- *   Commercial + no prints → hard stop only
- *   Residential + no prints → hard-stop warning + residential Qs + detector strategy
- *                             (no sq-ft bid counts, no commercial panel A/B/C unless
- *                              control panel system selected)
+ * Ceiling + lift: required commercial; residential when stories >= 2.
  */
 
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "panelpath_intake_v2";
-  const PRICES_KEY = "panelpath_prices_v2";
+  const STORAGE_KEY = "panelpath_intake_v3";
+  const PRICES_KEY = "panelpath_prices_v3";
   const DISCLAIMER =
     "Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.";
 
   const HARD_STOP_MSG =
-    "I can price this once I have prints (or a simple floor sketch with rooms labeled). Without that I’m guessing and the bid will be wrong.";
+    "I can price this once I have prints (or a simple floor sketch with rooms labeled). Without that I'm guessing and the bid will be wrong.";
+
+  const OCCUPANT_LOAD_STOP =
+    "Occupant load is how we know voice, pulls, and notification. Get it from the owner, architect, or posted occupant load. Guessing is how a school gets horns.";
+
+  const DEVICES_PRINT_STOP =
+    "Takeover/add-on without devices on the print is a blind bid. Mark smokes, pulls, horns/speakers, FACP, annunciator on the drawing first.";
+
+  const PRINT_NOT_READABLE_MSG =
+    "This isn't a usable drawing (napkin / blur / dark photo). Need a straight-on, well-lit scan or PDF export from CAD. I can't bid off this.";
+
+  const PRE1980_FLAG =
+    "Pre-1980 — confirm asbestos/lead before demo or device swap. Not a survey.";
+
+  const DEVICE_CHECKLIST_KEYS = [
+    { key: "smoke", label: "Smoke" },
+    { key: "heat", label: "Heat" },
+    { key: "duct", label: "Duct" },
+    { key: "pull", label: "Pull" },
+    { key: "horn", label: "Horn" },
+    { key: "speaker", label: "Speaker" },
+    { key: "strobe", label: "Strobe" },
+    { key: "facp", label: "FACP" },
+    { key: "annunciator", label: "Annunciator" },
+    { key: "communicator", label: "Communicator" },
+  ];
 
   const screens = {
     1: document.getElementById("screen-1"),
     2: document.getElementById("screen-2"),
     3: document.getElementById("screen-3"),
+  };
+
+  let printState = {
+    fileName: "",
+    fileType: "",
+    objectUrl: null,
+    longEdge: 0,
+    qualityWarn: "",
+    qualityFail: false,
+    pdfAcceptedNote: false,
+    notReadable: false,
+    looksReadable: false,
   };
 
   let state = {
@@ -52,7 +72,9 @@
     devices: null,
     detectorStrategy: null,
     showHardStopOnly: false,
+    hardStopKind: null,
     showSpecCode: false,
+    yellowFlag: null,
     unitCosts: {
       panel: "",
       smokes: "",
@@ -62,18 +84,21 @@
       program: "",
       test: "",
       certification: "",
+      lift: "",
     },
     unitCostsSpec: {},
     unitCostsCode: {},
     markup: 40,
+    takeoff: { devices: [], wire: [], initialized: false },
   };
 
-  /* ---------- navigation ---------- */
   function showScreen(n) {
+    const takeoffEl = document.getElementById("screen-takeoff");
     Object.keys(screens).forEach((k) => {
       const el = screens[k];
       if (!el) return;
-      if (Number(k) === n) {
+      const on = n !== "takeoff" && Number(k) === Number(n);
+      if (on) {
         el.hidden = false;
         el.removeAttribute("hidden");
       } else {
@@ -81,10 +106,18 @@
         el.setAttribute("hidden", "");
       }
     });
+    if (takeoffEl) {
+      if (n === "takeoff") {
+        takeoffEl.hidden = false;
+        takeoffEl.removeAttribute("hidden");
+      } else {
+        takeoffEl.hidden = true;
+        takeoffEl.setAttribute("hidden", "");
+      }
+    }
     window.scrollTo(0, 0);
   }
 
-  /* ---------- intake gate / branch visibility ---------- */
   function getGateValues(form) {
     const fd = new FormData(form);
     return {
@@ -94,30 +127,37 @@
     };
   }
 
+  function needsCeilingLift(jobScale, stories) {
+    if (jobScale === "commercial") return true;
+    if (jobScale === "residential" && (stories == null || stories >= 2)) return true;
+    return false;
+  }
+
   function updateIntakeVisibility() {
     const form = document.getElementById("intake-form");
     const gate = getGateValues(form);
     const body = document.getElementById("intake-body");
     const res = document.getElementById("residential-fields");
     const com = document.getElementById("commercial-fields");
+    const ceil = document.getElementById("ceiling-lift-block");
+    const printsBlock = document.getElementById("prints-upload-block");
+    const devicesWrap = document.getElementById("devices-on-print-wrap");
 
     const gatesReady = !!(gate.jobScale && gate.scope && gate.prints);
 
-    // Commercial + no prints: hard stop on continue — hide commercial detail fields
-    // so we don't invent layout. Still show shared markup/notes? Spec says hard stop
-    // only — hide rest of commercial form.
     if (!gatesReady) {
       body.hidden = true;
       res.hidden = true;
       com.hidden = true;
+      ceil.hidden = true;
       return;
     }
 
     if (gate.jobScale === "commercial" && gate.prints === "none") {
-      // Hard-stop on Continue — do not show commercial intake fields.
       body.hidden = true;
       res.hidden = true;
       com.hidden = true;
+      ceil.hidden = true;
       return;
     }
 
@@ -125,13 +165,74 @@
     if (gate.jobScale === "residential") {
       res.hidden = false;
       com.hidden = true;
+      if (printsBlock) printsBlock.hidden = true;
     } else {
       res.hidden = true;
       com.hidden = false;
+      if (printsBlock) printsBlock.hidden = gate.prints !== "have";
     }
+
+    const jobClass = (new FormData(form).get("jobClass") || "").toString();
+    if (devicesWrap) {
+      const need =
+        jobClass === "add-on" ||
+        jobClass === "takeover" ||
+        jobClass === "replacement";
+      devicesWrap.hidden = !need;
+    }
+
+    let stories = 1;
+    if (gate.jobScale === "residential") {
+      stories = Number(form.elements.resStories && form.elements.resStories.value) || 1;
+    } else {
+      stories = Number(form.elements.stories && form.elements.stories.value) || 1;
+    }
+    ceil.hidden = !needsCeilingLift(gate.jobScale, stories);
   }
 
-  /* ---------- intake helpers ---------- */
+  function buildDeviceChecklistUI() {
+    const box = document.getElementById("device-checklist");
+    if (!box || box.dataset.built === "1") return;
+    box.innerHTML = DEVICE_CHECKLIST_KEYS.map((d) => {
+      return (
+        '<div class="device-check-row">' +
+        '<label><input type="checkbox" name="devPresent_' +
+        d.key +
+        '" data-dev="' +
+        d.key +
+        '" /> ' +
+        escapeHtml(d.label) +
+        "</label>" +
+        '<input type="number" name="devCount_' +
+        d.key +
+        '" min="0" step="1" value="0" data-dev-count="' +
+        d.key +
+        '" aria-label="' +
+        escapeAttr(d.label) +
+        ' count" />' +
+        "</div>"
+      );
+    }).join("");
+    box.dataset.built = "1";
+  }
+
+  function readDeviceChecklist(form) {
+    const out = {};
+    let any = false;
+    DEVICE_CHECKLIST_KEYS.forEach((d) => {
+      const presentEl = form.elements["devPresent_" + d.key];
+      const countEl = form.elements["devCount_" + d.key];
+      const present = !!(presentEl && presentEl.checked);
+      let count = countEl ? Number(countEl.value) : 0;
+      if (!Number.isFinite(count) || count < 0) count = 0;
+      if (present && count === 0) count = 1;
+      if (!present) count = countEl && Number(countEl.value) > 0 ? Number(countEl.value) : 0;
+      if (count > 0) any = true;
+      out[d.key] = { present: present || count > 0, count: count };
+    });
+    return { items: out, used: any };
+  }
+
   function readForm(form) {
     const fd = new FormData(form);
     const get = (name) => {
@@ -148,16 +249,57 @@
     const jobScale = get("jobScale");
     const scope = get("scope");
     const prints = get("prints");
+    const jobClass = get("jobClass");
+    const devicesOnPrint = !!(
+      form.elements.devicesOnPrint && form.elements.devicesOnPrint.checked
+    );
+
+    const hazards = fd.getAll("hazard").map(String);
+    const occupantLoadUnknown = !!(
+      form.elements.occupantLoadUnknown &&
+      form.elements.occupantLoadUnknown.checked
+    );
+    const yearBuiltUnknown = !!(
+      form.elements.yearBuiltUnknown && form.elements.yearBuiltUnknown.checked
+    );
+
+    const checklist = readDeviceChecklist(form);
+
+    const jobCompat =
+      jobClass === "new"
+        ? "new"
+        : jobClass === "add-on"
+          ? "add-on"
+          : jobClass === "replacement"
+            ? "replace"
+            : jobClass || "";
 
     const base = {
       jobScale,
       scope,
       prints,
-      job: get("job"),
+      jobClass,
+      job: jobCompat,
+      devicesOnPrint,
       existingPanel: get("existingPanel"),
       ahj: get("ahj") || "unknown",
       markup: num("markup") ?? 40,
       notes: get("notes"),
+      ceilingTypical: num("ceilingTypical"),
+      ceilingHighest: num("ceilingHighest"),
+      ceilingType: get("ceilingType") || "unknown",
+      liftRequired: get("liftRequired") || "unknown",
+      deviceChecklist: checklist.items,
+      deviceChecklistUsed: checklist.used,
+      printFileName: printState.fileName || "",
+      printFileType: printState.fileType || "",
+      printLongEdge: printState.longEdge || 0,
+      printQualityWarn: printState.qualityWarn || "",
+      printNotReadable: !!printState.notReadable,
+      printLooksReadable:
+        !!(form.elements.pdfLooksReadable && form.elements.pdfLooksReadable.checked) ||
+        !!printState.looksReadable,
+      printHasFile: !!(printState.fileName && !printState.notReadable),
     };
 
     if (jobScale === "residential") {
@@ -170,12 +312,16 @@
         detectorPower: get("detectorPower") || "hardwired",
         coRequired: get("coRequired") || "unknown",
         resSystem: get("resSystem") || "none",
-        // Commercial fields unused
         occupancy: "",
         highRise75: false,
         sqFt: null,
         sprinklered: "unknown",
         occupantLoad: null,
+        occupantLoadUnknown: false,
+        yearBuilt: null,
+        yearBuiltUnknown: true,
+        hazards: [],
+        hazardOtherText: "",
         system: get("resSystem") || "none",
         monitoring: "unknown",
         voice: "unknown",
@@ -190,13 +336,17 @@
       highRise75: !!(form.elements.highRise75 && form.elements.highRise75.checked),
       sqFt: num("sqFt"),
       sprinklered: get("sprinklered") || "unknown",
-      occupantLoad: num("occupantLoad"),
+      occupantLoad: occupantLoadUnknown ? null : num("occupantLoad"),
+      occupantLoadUnknown,
+      yearBuilt: yearBuiltUnknown ? null : num("yearBuilt"),
+      yearBuiltUnknown,
+      hazards,
+      hazardOtherText: get("hazardOtherText"),
       system: get("system"),
       monitoring: get("monitoring") || "unknown",
       voice: get("voice") || "unknown",
       elevators: get("elevators") || "none",
       mfrLock: get("mfrLock") || "none",
-      // Residential unused
       bedrooms: null,
       basement: "",
       existingDetectors: "",
@@ -213,27 +363,136 @@
     if (!intake.scope) missing.push("Scope");
     if (!intake.prints) missing.push("Prints");
 
-    // Commercial + no prints: only gates required (hard stop)
     if (intake.jobScale === "commercial" && intake.prints === "none") {
       return missing;
     }
 
-    if (!intake.job) missing.push("Job");
+    if (!intake.jobClass) missing.push("Job class");
 
     if (intake.jobScale === "residential") {
-      // Residential always needs residential answers for strategy path
       if (intake.bedrooms == null) missing.push("Bedrooms");
-      if (!intake.resSystem && intake.resSystem !== "none") {
-        /* defaulted */
-      }
     } else if (intake.jobScale === "commercial") {
       if (!intake.occupancy) missing.push("Occupancy");
       if (!intake.system) missing.push("System");
       if (intake.prints === "have" && (intake.sqFt == null || intake.sqFt < 1)) {
         missing.push("Approx sq ft");
       }
+      if (!intake.occupantLoadUnknown && (intake.occupantLoad == null || intake.occupantLoad < 0)) {
+        missing.push("Occupant load (number or Unknown)");
+      }
+      if (!intake.yearBuiltUnknown && (intake.yearBuilt == null || intake.yearBuilt < 1800)) {
+        missing.push("Year built (number or Unknown)");
+      }
+      if (!intake.hazards || !intake.hazards.length) {
+        missing.push("Hazards");
+      }
+      if (intake.hazards && intake.hazards.includes("other") && !intake.hazardOtherText) {
+        missing.push("Other hazard detail");
+      }
+      if (intake.prints === "have" && !printState.fileName) {
+        missing.push("Prints upload (PDF or image)");
+      }
     }
+
+    if (needsCeilingLift(intake.jobScale, intake.stories)) {
+      if (intake.ceilingTypical == null || intake.ceilingTypical <= 0) {
+        missing.push("Typical finished ceiling (ft)");
+      }
+      if (!intake.ceilingType) missing.push("Ceiling type");
+      if (!intake.liftRequired) missing.push("Lift required");
+    }
+
     return missing;
+  }
+
+  function formLooksReadable() {
+    const form = document.getElementById("intake-form");
+    return !!(form.elements.pdfLooksReadable && form.elements.pdfLooksReadable.checked);
+  }
+
+  function commercialHardStop(intake) {
+    if (intake.jobScale !== "commercial") return null;
+
+    if (intake.prints === "none") {
+      return {
+        kind: "no-prints",
+        title: "Need floor plan / prints before markup or device counts you can bid.",
+        body: "Commercial jobs need drawings before panel A/B/C or bid device counts.",
+        copy: HARD_STOP_MSG,
+        showCopy: true,
+      };
+    }
+
+    if (intake.occupantLoadUnknown) {
+      return {
+        kind: "occupant-load",
+        title: "Occupant load required — cannot open commercial results.",
+        body: OCCUPANT_LOAD_STOP,
+        copy: OCCUPANT_LOAD_STOP,
+        showCopy: true,
+      };
+    }
+
+    const jc = intake.jobClass;
+    if (
+      (jc === "add-on" || jc === "takeover" || jc === "replacement") &&
+      !intake.devicesOnPrint
+    ) {
+      return {
+        kind: "devices-on-print",
+        title: "Existing devices must be marked on the print.",
+        body: DEVICES_PRINT_STOP,
+        copy: DEVICES_PRINT_STOP,
+        showCopy: true,
+      };
+    }
+
+    if (intake.prints === "have") {
+      if (!printState.fileName && !intake.printHasFile) {
+        return {
+          kind: "no-upload",
+          title: "Upload drawings before commercial results.",
+          body: "You said you have drawings — attach a PDF or image before panel A/B/C.",
+          copy: HARD_STOP_MSG,
+          showCopy: true,
+        };
+      }
+      if (printState.notReadable || intake.printNotReadable) {
+        return {
+          kind: "not-readable",
+          title: "This print is not readable.",
+          body: PRINT_NOT_READABLE_MSG,
+          copy: PRINT_NOT_READABLE_MSG,
+          showCopy: true,
+        };
+      }
+      if (printState.qualityFail) {
+        return {
+          kind: "quality",
+          title: "Print quality too low to bid.",
+          body:
+            (printState.qualityWarn || "Image too small or no linework detected.") +
+            " Upload a better scan or mark not readable.",
+          copy: PRINT_NOT_READABLE_MSG,
+          showCopy: true,
+        };
+      }
+      if (
+        printState.fileType === "application/pdf" &&
+        !intake.printLooksReadable &&
+        !formLooksReadable()
+      ) {
+        return {
+          kind: "pdf-confirm",
+          title: "Confirm the PDF looks readable.",
+          body: "PDF accepted — check the Looks readable box on intake, or mark not readable.",
+          copy: PRINT_NOT_READABLE_MSG,
+          showCopy: true,
+        };
+      }
+    }
+
+    return null;
   }
 
   function fillForm(intake) {
@@ -242,14 +501,17 @@
     const setRadio = (name, val) => {
       if (val == null || val === "") return;
       const el = form.querySelector(
-        `input[name="${name}"][value="${CSS.escape(String(val))}"]`
+        'input[name="' + name + '"][value="' + CSS.escape(String(val)) + '"]'
       );
       if (el) el.checked = true;
     };
     setRadio("jobScale", intake.jobScale);
     setRadio("scope", intake.scope);
     setRadio("prints", intake.prints);
-    setRadio("job", intake.job);
+    setRadio("jobClass", intake.jobClass || intake.job);
+    if (form.elements.devicesOnPrint) {
+      form.elements.devicesOnPrint.checked = !!intake.devicesOnPrint;
+    }
     form.elements.existingPanel.value = intake.existingPanel || "";
     setRadio("ahj", intake.ahj || "unknown");
 
@@ -270,21 +532,62 @@
       }
       form.elements.sqFt.value = intake.sqFt ?? "";
       setRadio("sprinklered", intake.sprinklered || "unknown");
+      if (form.elements.occupantLoadUnknown) {
+        form.elements.occupantLoadUnknown.checked = !!intake.occupantLoadUnknown;
+      }
       form.elements.occupantLoad.value =
         intake.occupantLoad != null ? intake.occupantLoad : "";
+      if (intake.occupantLoadUnknown) form.elements.occupantLoad.disabled = true;
+      if (form.elements.yearBuiltUnknown) {
+        form.elements.yearBuiltUnknown.checked = !!intake.yearBuiltUnknown;
+      }
+      if (form.elements.yearBuilt) {
+        form.elements.yearBuilt.value =
+          intake.yearBuilt != null ? intake.yearBuilt : "";
+        if (intake.yearBuiltUnknown) form.elements.yearBuilt.disabled = true;
+      }
+      form.querySelectorAll('input[name="hazard"]').forEach((cb) => {
+        cb.checked = !!(intake.hazards && intake.hazards.includes(cb.value));
+      });
+      if (form.elements.hazardOtherText) {
+        form.elements.hazardOtherText.value = intake.hazardOtherText || "";
+      }
+      toggleHazardOther();
       setRadio("system", intake.system);
       setRadio("monitoring", intake.monitoring || "unknown");
       setRadio("voice", intake.voice || "unknown");
       setRadio("elevators", intake.elevators || "none");
       setRadio("mfrLock", intake.mfrLock || "none");
+
+      if (intake.deviceChecklist) {
+        buildDeviceChecklistUI();
+        DEVICE_CHECKLIST_KEYS.forEach((d) => {
+          const item = intake.deviceChecklist[d.key];
+          if (!item) return;
+          const p = form.elements["devPresent_" + d.key];
+          const c = form.elements["devCount_" + d.key];
+          if (p) p.checked = !!item.present;
+          if (c) c.value = item.count != null ? item.count : 0;
+        });
+      }
     }
+
+    if (form.elements.ceilingTypical) {
+      form.elements.ceilingTypical.value =
+        intake.ceilingTypical != null ? intake.ceilingTypical : "";
+    }
+    if (form.elements.ceilingHighest) {
+      form.elements.ceilingHighest.value =
+        intake.ceilingHighest != null ? intake.ceilingHighest : "";
+    }
+    setRadio("ceilingType", intake.ceilingType || "unknown");
+    setRadio("liftRequired", intake.liftRequired || "unknown");
 
     form.elements.markup.value = intake.markup ?? 40;
     form.elements.notes.value = intake.notes || "";
     updateIntakeVisibility();
   }
 
-  /* ---------- recommendation engine (commercial / panel) ---------- */
   function buildHeuristics(intake) {
     const highRise = !!intake.highRise75;
     const sqFt = intake.sqFt || 0;
@@ -335,7 +638,7 @@
 
   function lockNote(intake) {
     if (!intake.mfrLock || intake.mfrLock === "none") return "";
-    return ` lock: ${intake.mfrLock} — prefer matching class`;
+    return " lock: " + intake.mfrLock + " — prefer matching class";
   }
 
   function recommend(intake) {
@@ -344,75 +647,30 @@
     let A, B, C;
 
     if (h.rule === 3) {
-      A = {
-        label: "NFS-640 / voice class",
-        tag: "likely",
-        why: "Voice or high-rise / large assembly path." + lock,
-      };
-      B = {
-        label: "NFS-3030 / voice class",
-        tag: "check AHJ",
-        why: "Larger networked / campus voice when AHJ or scale demands it." + lock,
-      };
-      C = {
-        label: "Do not bid horn-only / do not bid Vista-20P",
-        tag: "check AHJ",
-        why: "Horn-only or 20P-class is the wrong bid on this path.",
-      };
+      A = { label: "NFS-640 / voice class", tag: "likely", why: "Voice or high-rise / large assembly path." + lock };
+      B = { label: "NFS-3030 / voice class", tag: "check AHJ", why: "Larger networked / campus voice when AHJ or scale demands it." + lock };
+      C = { label: "Do not bid horn-only / do not bid Vista-20P", tag: "check AHJ", why: "Horn-only or 20P-class is the wrong bid on this path." };
     } else if (h.rule === 2) {
-      A = {
-        label: "FireWarden / NFS-320 class",
-        tag: "likely",
-        why: "Fire, small commercial, not high-rise / big assembly." + lock,
-      };
-      B = {
-        label: "NFS-640 class",
-        tag: "check AHJ",
-        why: "Step-up capacity or denser device count." + lock,
-      };
+      A = { label: "FireWarden / NFS-320 class", tag: "likely", why: "Fire, small commercial, not high-rise / big assembly." + lock };
+      B = { label: "NFS-640 class", tag: "check AHJ", why: "Step-up capacity or denser device count." + lock };
       if (h.includesFire) {
-        C = {
-          label: "NFS-320 + expanders / check manufacturer lock",
-          tag: "check AHJ",
-          why: "Stay in addressable fire; expand rather than down-bid." + lock,
-        };
+        C = { label: "NFS-320 + expanders / check manufacturer lock", tag: "check AHJ", why: "Stay in addressable fire; expand rather than down-bid." + lock };
       } else {
-        C = {
-          label: "Vista class (fire not required)",
-          tag: "check AHJ",
-          why: "Burg-only fallback — confirm fire is truly not required." + lock,
-        };
+        C = { label: "Vista class (fire not required)", tag: "check AHJ", why: "Burg-only fallback — confirm fire is truly not required." + lock };
       }
     } else {
-      A = {
-        label: "Vista-20P class",
-        tag: "likely",
-        why: "Burg or small combo; not voice; not high-rise." + lock,
-      };
-      B = {
-        label: "Vista-128 class",
-        tag: "check AHJ",
-        why: "More zones / points or commercial burg scale." + lock,
-      };
+      A = { label: "Vista-20P class", tag: "likely", why: "Burg or small combo; not voice; not high-rise." + lock };
+      B = { label: "Vista-128 class", tag: "check AHJ", why: "More zones / points or commercial burg scale." + lock };
       if (h.includesFire) {
-        C = {
-          label: "Small addressable fire class",
-          tag: "check AHJ",
-          why: "Fire also selected — consider a small addressable FACP." + lock,
-        };
+        C = { label: "Small addressable fire class", tag: "check AHJ", why: "Fire also selected — consider a small addressable FACP." + lock };
       } else {
-        C = {
-          label: "Add fire panel later / confirm AHJ",
-          tag: "check AHJ",
-          why: "Burg-only today — confirm whether fire is deferred or not required.",
-        };
+        C = { label: "Add fire panel later / confirm AHJ", tag: "check AHJ", why: "Burg-only today — confirm whether fire is deferred or not required." };
       }
     }
 
-    return { ...h, options: { A, B, C } };
+    return Object.assign({}, h, { options: { A: A, B: B, C: C } });
   }
 
-  /* ---------- residential detector strategy ---------- */
   function detectorStrategy(intake) {
     return {
       A: {
@@ -446,22 +704,37 @@
     };
   }
 
-  /* ---------- device estimates ---------- */
+  function devicesFromChecklist(intake, heuristics) {
+    const c = intake.deviceChecklist || {};
+    const n = (k) => (c[k] && c[k].count) || 0;
+    const smokes = n("smoke") + n("heat") + n("duct");
+    const pulls = n("pull");
+    const horns = n("horn") + n("speaker") + n("strobe");
+    const facp = n("facp");
+    const communicator = n("communicator");
+    const annunciator = n("annunciator");
+    return {
+      panel: facp > 0 ? facp : 1,
+      smokes: smokes,
+      pulls: pulls,
+      horns: horns,
+      communicator: communicator,
+      annunciator: annunciator,
+      heat: n("heat"),
+      duct: n("duct"),
+      speaker: n("speaker"),
+      strobe: n("strobe"),
+      checklistOnly: false,
+      fromChecklist: true,
+    };
+  }
+
   function estimateDevices(intake, heuristics) {
-    // Residential without prints: no sq-ft bid quantities
-    if (intake.jobScale === "residential" && intake.prints === "none") {
-      return {
-        panel: heuristics.system && heuristics.system !== "none" ? 1 : 0,
-        smokes: 0,
-        pulls: 0,
-        horns: 0,
-        communicator: 0,
-        checklistOnly: true,
-      };
+    if (intake.jobScale === "commercial" && intake.deviceChecklistUsed) {
+      return devicesFromChecklist(intake, heuristics);
     }
 
     if (intake.jobScale === "residential") {
-      // With prints: still no invented sq-ft densities — checklist only for detectors
       const hasPanel = heuristics.system && heuristics.system !== "none";
       return {
         panel: hasPanel ? 1 : 0,
@@ -507,30 +780,59 @@
 
     return {
       panel: 1,
-      smokes,
-      pulls,
-      horns,
-      communicator,
+      smokes: smokes,
+      pulls: pulls,
+      horns: horns,
+      communicator: communicator,
       checklistOnly: false,
+      fromChecklist: false,
     };
   }
 
-  /* ---------- render results ---------- */
-  function renderHardStop(showOnly) {
+  function effectiveHighestCeiling(intake) {
+    if (intake.ceilingHighest != null && intake.ceilingHighest > 0) {
+      return intake.ceilingHighest;
+    }
+    return intake.ceilingTypical;
+  }
+
+  function liftBudgetFlag(intake) {
+    if (intake.liftRequired !== "unknown") return false;
+    const h = effectiveHighestCeiling(intake);
+    return h != null && h >= 12;
+  }
+
+  function renderHardStop(stop, showOnly) {
     const card = document.getElementById("hard-stop");
     const main = document.getElementById("results-main");
     card.hidden = false;
-    document.getElementById("hard-stop-msg").value = HARD_STOP_MSG;
-    if (showOnly) {
-      main.hidden = true;
+    document.getElementById("hard-stop-title").textContent = stop.title;
+    document.getElementById("hard-stop-body").textContent = stop.body;
+    const copyWrap = document.getElementById("hard-stop-copy-wrap");
+    const ta = document.getElementById("hard-stop-msg");
+    if (stop.showCopy && stop.copy) {
+      copyWrap.hidden = false;
+      ta.value = stop.copy;
     } else {
-      main.hidden = false;
+      copyWrap.hidden = true;
+      ta.value = stop.copy || "";
     }
+    main.hidden = !!showOnly;
   }
 
   function hideHardStop() {
     document.getElementById("hard-stop").hidden = true;
     document.getElementById("results-main").hidden = false;
+  }
+
+  function renderYellowFlag(text) {
+    const el = document.getElementById("yellow-flag");
+    if (!text) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    document.getElementById("yellow-flag-body").textContent = text;
   }
 
   function renderFlags(rec, intake) {
@@ -553,6 +855,25 @@
     if (rec && rec.rule === 3) add("don't sell 20P", "alert");
     if (intake.ahj === "unknown") add("AHJ unknown", "warn");
     if (rec && rec.needsSpecCode) add("Spec vs code", "alert");
+    if (intake.printQualityWarn) add("print quality warn", "warn");
+    if (intake.printNotReadable) add("print not readable", "alert");
+
+    const typical = intake.ceilingTypical;
+    const highest = effectiveHighestCeiling(intake);
+    if (typical != null && typical >= 10) {
+      add("verify smoke spacing and candela — table spacing changes with height", "warn");
+    }
+    if (
+      (typical != null && typical >= 25) ||
+      (highest != null && highest >= 25) ||
+      intake.ceilingType === "warehouse-deck"
+    ) {
+      add("this is not a 6-ft ladder job", "alert");
+    }
+    if (liftBudgetFlag(intake)) {
+      add("budget a lift until they prove a ladder works", "warn");
+    }
+    if (intake.liftRequired === "yes") add("lift required", "warn");
 
     const occFlag = document.getElementById("occ-flag");
     if (
@@ -607,11 +928,7 @@
     const byOthers = document.getElementById("device-by-others");
     const estLabel = document.getElementById("device-est-label");
 
-    if (intake.scope === "check-and-test") {
-      byOthers.hidden = false;
-    } else {
-      byOthers.hidden = true;
-    }
+    byOthers.hidden = intake.scope !== "check-and-test";
 
     if (devices.checklistOnly) {
       ul.innerHTML = "";
@@ -627,7 +944,7 @@
           : "CO — verify if required",
       ];
       checklist.innerHTML =
-        "<p class=\"hint\">No sq-ft ESTIMATE counts as bid quantities without a floor plan.</p><ul>" +
+        '<p class="hint">No sq-ft ESTIMATE counts as bid quantities without a floor plan.</p><ul>' +
         items.map((t) => "<li>" + escapeHtml(t) + "</li>").join("") +
         "</ul>";
       return;
@@ -636,47 +953,49 @@
     checklist.hidden = true;
     checklist.innerHTML = "";
     ul.hidden = false;
-    estLabel.textContent = "ESTIMATE";
+    estLabel.textContent = devices.fromChecklist
+      ? "FROM PRINT CHECKLIST"
+      : "ESTIMATE";
     const rows = [
       ["Smokes", devices.smokes],
       ["Pulls", devices.pulls],
-      ["Horns / Speakers", devices.horns],
+      ["Horns / Speakers / Strobes", devices.horns],
       ["Communicator", devices.communicator],
     ];
-    if (intake.scope === "check-and-test") {
-      ul.innerHTML = rows
-        .map(
-          ([lbl, qty]) =>
-            "<li><span class=\"qty\">" +
-            qty +
-            '</span><span class="lbl">' +
-            escapeHtml(lbl) +
-            " (ESTIMATE — devices by others)</span></li>"
-        )
-        .join("");
-    } else {
-      ul.innerHTML = rows
-        .map(
-          ([lbl, qty]) =>
-            "<li><span class=\"qty\">" +
-            qty +
-            '</span><span class="lbl">' +
-            escapeHtml(lbl) +
-            " (ESTIMATE)</span></li>"
-        )
-        .join("");
-    }
+    if (devices.annunciator) rows.push(["Annunciator", devices.annunciator]);
+    const suffix = devices.fromChecklist
+      ? " (from print checklist)"
+      : intake.scope === "check-and-test"
+        ? " (ESTIMATE — devices by others)"
+        : " (ESTIMATE)";
+    ul.innerHTML = rows
+      .map(
+        ([lbl, qty]) =>
+          '<li><span class="qty">' +
+          qty +
+          '</span><span class="lbl">' +
+          escapeHtml(lbl) +
+          escapeHtml(suffix) +
+          "</span></li>"
+      )
+      .join("");
   }
 
   function priceRowsFor(intake, devices) {
+    const liftRow = {
+      key: "lift",
+      label: "Lift / scissor / boom — enter daily rate",
+      qty: 1,
+    };
     if (intake.scope === "check-and-test") {
-      return [
+      const rows = [
         { key: "program", label: "Program", qty: 1 },
         { key: "test", label: "Test", qty: 1 },
         { key: "certification", label: "Certification", qty: 1 },
       ];
+      if (intake.liftRequired === "yes") rows.push(liftRow);
+      return rows;
     }
-    // Turnkey
     if (devices.checklistOnly) {
       const rows = [];
       if (devices.panel) {
@@ -687,19 +1006,18 @@
         { key: "test", label: "Test", qty: 1 },
         { key: "certification", label: "Certification", qty: 1 }
       );
+      if (intake.liftRequired === "yes") rows.push(liftRow);
       return rows;
     }
-    return [
+    const rows = [
       { key: "panel", label: "Panel", qty: devices.panel },
       { key: "smokes", label: "Smokes", qty: devices.smokes },
       { key: "pulls", label: "Pulls", qty: devices.pulls },
       { key: "horns", label: "Horns/Speakers", qty: devices.horns },
-      {
-        key: "communicator",
-        label: "Communicator",
-        qty: devices.communicator,
-      },
+      { key: "communicator", label: "Communicator", qty: devices.communicator },
     ];
+    if (intake.liftRequired === "yes") rows.push(liftRow);
+    return rows;
   }
 
   function fillPriceBody(tbody, rows, unitCosts, prefix) {
@@ -738,10 +1056,16 @@
 
     if (intake.scope === "check-and-test") {
       hint.textContent =
-        "Check-and-test: labor rows only (Program / Test / Certification). Device install by others. Unit $ empty.";
+        "Check-and-test: labor rows only (Program / Test / Certification). Device install by others. Unit $ empty." +
+        (intake.liftRequired === "yes"
+          ? " Lift line added — enter daily rate (no invented rental price)."
+          : "");
     } else {
       hint.textContent =
-        "Unit costs stay empty — you fill them. No list prices invented.";
+        "Unit costs stay empty — you fill them. No list prices invented." +
+        (intake.liftRequired === "yes"
+          ? " Lift line added — enter daily rate."
+          : "");
     }
 
     if (dual) {
@@ -753,18 +1077,8 @@
       if (!state.unitCostsCode || !Object.keys(state.unitCostsCode).length) {
         state.unitCostsCode = Object.assign({}, unitCosts);
       }
-      fillPriceBody(
-        document.getElementById("price-body-spec"),
-        rows,
-        state.unitCostsSpec,
-        "spec"
-      );
-      fillPriceBody(
-        document.getElementById("price-body-code"),
-        rows,
-        state.unitCostsCode,
-        "code"
-      );
+      fillPriceBody(document.getElementById("price-body-spec"), rows, state.unitCostsSpec, "spec");
+      fillPriceBody(document.getElementById("price-body-code"), rows, state.unitCostsCode, "code");
       document.getElementById("markup-live-spec").value = markup;
       document.getElementById("markup-live-code").value = markup;
       recalcPrices();
@@ -779,18 +1093,8 @@
 
   function recalcPrices() {
     if (state.showSpecCode) {
-      recalcOne(
-        "#price-body-spec",
-        "markup-live-spec",
-        "price-total-spec",
-        "spec"
-      );
-      recalcOne(
-        "#price-body-code",
-        "markup-live-code",
-        "price-total-code",
-        "code"
-      );
+      recalcOne("#price-body-spec", "markup-live-spec", "price-total-spec", "spec");
+      recalcOne("#price-body-code", "markup-live-code", "price-total-code", "code");
     } else {
       recalcOne("#price-body", "markup-live", "price-total", "");
     }
@@ -832,15 +1136,12 @@
         ext = qty * unit * (1 + m / 100);
       }
       total += ext;
-      const extCell = document.querySelector(
-        '[data-ext="' + CSS.escape(rawKey) + '"]'
-      );
+      const extCell = document.querySelector('[data-ext="' + CSS.escape(rawKey) + '"]');
       if (extCell) extCell.textContent = formatMoney(ext);
     });
     document.getElementById(totalId).textContent = formatMoney(total);
   }
 
-  /* ---------- summary ---------- */
   function labelMap(key, val) {
     const maps = {
       jobScale: { residential: "Residential", commercial: "Commercial" },
@@ -848,9 +1149,12 @@
         turnkey: "Turnkey (wire + devices + program)",
         "check-and-test": "Check-and-test only",
       },
-      prints: {
-        have: "I have drawings",
-        none: "I do not have drawings",
+      prints: { have: "I have drawings", none: "I do not have drawings" },
+      jobClass: {
+        new: "New system",
+        "add-on": "Add-on to existing",
+        takeover: "Takeover of existing",
+        replacement: "Replacement",
       },
       job: { new: "New", replace: "Replace", "add-on": "Add-on" },
       ahj: {
@@ -859,12 +1163,7 @@
         "state-fire": "State fire",
         unknown: "Unknown",
       },
-      sprinklered: {
-        yes: "Yes",
-        no: "No",
-        partial: "Partial",
-        unknown: "Unknown",
-      },
+      sprinklered: { yes: "Yes", no: "No", partial: "Partial", unknown: "Unknown" },
       system: {
         fire: "Fire",
         burg: "Burg",
@@ -887,10 +1186,29 @@
         battery: "Battery-only",
       },
       coRequired: { unknown: "Unknown", yes: "Yes", no: "No" },
+      ceilingType: {
+        drywall: "Drywall",
+        "drop-tile": "Drop-tile",
+        "open-joist": "Open joist",
+        "warehouse-deck": "Warehouse deck",
+        unknown: "Unknown",
+      },
+      liftRequired: { yes: "Yes", no: "No", unknown: "Unknown" },
     };
     if (maps[key] && maps[key][val] != null) return maps[key][val];
     if (val === "" || val == null) return "—";
     return String(val);
+  }
+
+  function hazardSummary(intake) {
+    if (!intake.hazards || !intake.hazards.length) return "—";
+    const labels = {
+      asbestos: "Asbestos suspected",
+      lead: "Lead paint or lead components",
+      other: "Other" + (intake.hazardOtherText ? ": " + intake.hazardOtherText : ""),
+      none: "None known",
+    };
+    return intake.hazards.map((h) => labels[h] || h).join("; ");
   }
 
   function renderSummary() {
@@ -903,7 +1221,11 @@
       ["Job scale", labelMap("jobScale", intake.jobScale)],
       ["Scope", labelMap("scope", intake.scope)],
       ["Prints", labelMap("prints", intake.prints)],
-      ["Job", labelMap("job", intake.job)],
+      ["Job class", labelMap("jobClass", intake.jobClass)],
+      [
+        "Devices marked on print",
+        intake.devicesOnPrint ? "Yes" : intake.jobClass === "new" ? "n/a" : "No",
+      ],
       ["Existing panel", intake.existingPanel || "—"],
       ["AHJ", labelMap("ahj", intake.ahj)],
     ];
@@ -913,17 +1235,11 @@
         ["Stories", String(intake.stories)],
         ["Bedrooms", String(intake.bedrooms)],
         ["Basement", labelMap("basement", intake.basement)],
-        [
-          "Existing detectors",
-          labelMap("existingDetectors", intake.existingDetectors),
-        ],
+        ["Existing detectors", labelMap("existingDetectors", intake.existingDetectors)],
         ["Interconnected", labelMap("interconnected", intake.interconnected)],
         ["Power / backup", labelMap("detectorPower", intake.detectorPower)],
         ["CO required", labelMap("coRequired", intake.coRequired)],
-        [
-          "Control panel system",
-          labelMap("system", intake.resSystem || intake.system),
-        ]
+        ["Control panel system", labelMap("system", intake.resSystem || intake.system)]
       );
     } else {
       intakeRows.push(
@@ -934,8 +1250,21 @@
         ["Sprinklered", labelMap("sprinklered", intake.sprinklered)],
         [
           "Occupant load",
-          intake.occupantLoad != null ? String(intake.occupantLoad) : "—",
+          intake.occupantLoadUnknown
+            ? "Unknown (HARD STOP)"
+            : intake.occupantLoad != null
+              ? String(intake.occupantLoad)
+              : "—",
         ],
+        [
+          "Year built",
+          intake.yearBuiltUnknown
+            ? "Unknown"
+            : intake.yearBuilt != null
+              ? String(intake.yearBuilt)
+              : "—",
+        ],
+        ["Hazards", hazardSummary(intake)],
         ["System", labelMap("system", intake.system)],
         ["Monitoring", labelMap("monitoring", intake.monitoring)],
         ["Voice evac", labelMap("voice", intake.voice)],
@@ -944,21 +1273,55 @@
       );
     }
 
-    intakeRows.push(
-      ["Rep markup %", String(state.markup)],
-      ["Notes", intake.notes || "—"]
-    );
+    if (needsCeilingLift(intake.jobScale, intake.stories)) {
+      intakeRows.push(
+        ["Typical ceiling (ft)", intake.ceilingTypical != null ? String(intake.ceilingTypical) : "—"],
+        ["Highest ceiling (ft)", intake.ceilingHighest != null ? String(intake.ceilingHighest) : "—"],
+        ["Ceiling type", labelMap("ceilingType", intake.ceilingType)],
+        ["Lift required", labelMap("liftRequired", intake.liftRequired)]
+      );
+    }
+
+    if (intake.prints === "have" && intake.jobScale === "commercial") {
+      intakeRows.push(
+        ["Print file", intake.printFileName || "(none)"],
+        [
+          "Print readable",
+          intake.printNotReadable
+            ? "NOT readable"
+            : intake.printLooksReadable || printState.fileType !== "application/pdf"
+              ? "Accepted / readable"
+              : "Pending confirm",
+        ]
+      );
+      if (intake.deviceChecklistUsed) {
+        const parts = DEVICE_CHECKLIST_KEYS.map((d) => {
+          const it = intake.deviceChecklist[d.key];
+          if (!it || !it.count) return null;
+          return d.label + ": " + it.count;
+        }).filter(Boolean);
+        intakeRows.push(["Print checklist counts", parts.join(", ") || "—"]);
+      }
+    }
+
+    intakeRows.push(["Rep markup %", String(state.markup)], ["Notes", intake.notes || "—"]);
 
     let html = "<h4>Intake</h4><dl>";
     intakeRows.forEach(([k, v]) => {
-      html +=
-        "<dt>" +
-        escapeHtml(k) +
-        "</dt><dd>" +
-        escapeHtml(v) +
-        "</dd>";
+      html += "<dt>" + escapeHtml(k) + "</dt><dd>" + escapeHtml(v) + "</dd>";
     });
     html += "</dl>";
+
+    if (state.hardStopKind) {
+      html +=
+        "<h4>Hard stop</h4><p>" +
+        escapeHtml(state.hardStopKind) +
+        " — commercial panel A/B/C blocked.</p>";
+    }
+
+    if (state.yellowFlag) {
+      html += "<h4>Hazard flag</h4><p>" + escapeHtml(state.yellowFlag) + "</p>";
+    }
 
     if (intake.prints === "none") {
       html +=
@@ -974,7 +1337,7 @@
 
     if (state.detectorStrategy) {
       html +=
-        "<h4>Detector strategy <span class=\"est-label\">ESTIMATE / confirm with AHJ and Michigan residential rules</span></h4>";
+        '<h4>Detector strategy <span class="est-label">ESTIMATE / confirm with AHJ and Michigan residential rules</span></h4>';
       ["A", "B", "C"].forEach((letter) => {
         const o = state.detectorStrategy[letter];
         html +=
@@ -1009,7 +1372,7 @@
 
     if (state.showSpecCode) {
       html +=
-        "<h4>Spec vs code</h4><div class=\"two-col summary-cols\"><div><strong>Spec path</strong><ul><li>Follow drawings / horns as drawn</li><li>Bid notification as drawn</li></ul></div><div><strong>Code-corrected path</strong><ul><li>Voice / evac per MI / IBC</li><li>Align with rule 3 when voice / high-rise / large assembly</li></ul></div></div>";
+        '<h4>Spec vs code</h4><div class="two-col summary-cols"><div><strong>Spec path</strong><ul><li>Follow drawings / horns as drawn</li><li>Bid notification as drawn</li></ul></div><div><strong>Code-corrected path</strong><ul><li>Voice / evac per MI / IBC</li><li>Align with rule 3 when voice / high-rise / large assembly</li></ul></div></div>';
     }
 
     html += "<h4>Flags</h4><ul>";
@@ -1019,6 +1382,20 @@
     if (rec && rec.highRise) html += "<li>high-rise</li>";
     if (rec && rec.rule === 3) html += "<li>don't sell 20P</li>";
     if (rec && rec.needsSpecCode) html += "<li>Spec vs code</li>";
+    if (intake.ceilingTypical != null && intake.ceilingTypical >= 10) {
+      html += "<li>verify smoke spacing and candela — table spacing changes with height</li>";
+    }
+    const hi = effectiveHighestCeiling(intake);
+    if (
+      (intake.ceilingTypical != null && intake.ceilingTypical >= 25) ||
+      (hi != null && hi >= 25) ||
+      intake.ceilingType === "warehouse-deck"
+    ) {
+      html += "<li>this is not a 6-ft ladder job</li>";
+    }
+    if (liftBudgetFlag(intake)) {
+      html += "<li>budget a lift until they prove a ladder works</li>";
+    }
     if (
       intake.jobScale === "commercial" &&
       (intake.occupancy === "healthcare" || intake.occupancy === "education")
@@ -1033,25 +1410,22 @@
           "<h4>Device approach</h4><p>Checklist only — no sq-ft ESTIMATE bid quantities without prints.</p>";
       } else {
         html +=
-          "<h4>Device counts <span class=\"est-label\">ESTIMATE</span></h4><ul>" +
+          '<h4>Device counts <span class="est-label">' +
+          (devices.fromChecklist ? "FROM PRINT CHECKLIST" : "ESTIMATE") +
+          "</span></h4><ul>" +
           "<li>Panel: " +
           devices.panel +
-          "</li>" +
-          "<li>Smokes: " +
+          "</li><li>Smokes: " +
           devices.smokes +
-          "</li>" +
-          "<li>Pulls: " +
+          "</li><li>Pulls: " +
           devices.pulls +
-          "</li>" +
-          "<li>Horns/Speakers: " +
+          "</li><li>Horns/Speakers: " +
           devices.horns +
-          "</li>" +
-          "<li>Communicator: " +
+          "</li><li>Communicator: " +
           devices.communicator +
           "</li></ul>";
         if (intake.scope === "check-and-test") {
-          html +=
-            "<p><em>Devices by others (electrician) — check-and-test scope.</em></p>";
+          html += "<p><em>Devices by others (electrician) — check-and-test scope.</em></p>";
         }
       }
     }
@@ -1061,6 +1435,9 @@
       (intake.scope === "check-and-test"
         ? "Program + Test + Certification only (no device install hours)."
         : "Turnkey: device + panel rows (or labor if residential checklist).") +
+      (intake.liftRequired === "yes"
+        ? " Lift / scissor / boom line included — enter daily rate."
+        : "") +
       "</p>";
 
     const rows = priceRowsFor(intake, devices || { panel: 0, checklistOnly: true });
@@ -1069,7 +1446,7 @@
     html +=
       "<h4>Price table</h4><p>Markup " +
       escapeHtml(String(m)) +
-      "%</p><table><thead><tr><th>Item</th><th>Qty</th><th>Unit $</th><th>Extended</th></tr></thead><tbody>";
+      '%</p><table><thead><tr><th>Item</th><th>Qty</th><th>Unit $</th><th>Extended</th></tr></thead><tbody>';
     rows.forEach((r) => {
       const unitRaw = state.unitCosts[r.key];
       const unit = unitRaw === "" || unitRaw == null ? NaN : Number(unitRaw);
@@ -1095,10 +1472,11 @@
       formatMoney(total) +
       "</strong></td></tr></tfoot></table>";
 
+    html += takeoffSummaryHtml();
+
     body.innerHTML = html;
   }
 
-  /* ---------- utils ---------- */
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, "&amp;")
@@ -1125,21 +1503,41 @@
       const sys = intake.resSystem || intake.system || "none";
       return sys === "fire" || sys === "burg" || sys === "both";
     }
-    return true; // commercial always has panel A/B/C when not hard-stopped
+    return true;
+  }
+
+  function pre1980YellowFlag(intake) {
+    if (intake.jobScale !== "commercial") return null;
+    if (intake.yearBuiltUnknown || intake.yearBuilt == null) return null;
+    if (intake.yearBuilt >= 1980) return null;
+    if (intake.hazards && intake.hazards.includes("none")) {
+      return PRE1980_FLAG;
+    }
+    return null;
   }
 
   function goResults() {
     const intake = state.intake;
     state.showHardStopOnly = false;
+    state.hardStopKind = null;
     state.showSpecCode = false;
     state.detectorStrategy = null;
     state.rec = null;
     state.devices = null;
+    state.yellowFlag = null;
 
-    // Commercial + no prints → hard stop only
-    if (intake.jobScale === "commercial" && intake.prints === "none") {
+    intake.printNotReadable = !!printState.notReadable;
+    intake.printQualityWarn = printState.qualityWarn || "";
+    intake.printFileName = printState.fileName || intake.printFileName || "";
+    intake.printLooksReadable = formLooksReadable() || !!printState.looksReadable;
+
+    const stop = commercialHardStop(intake);
+    if (stop) {
       state.showHardStopOnly = true;
-      renderHardStop(true);
+      state.hardStopKind = stop.kind;
+      state.yellowFlag = pre1980YellowFlag(intake);
+      renderYellowFlag(state.yellowFlag);
+      renderHardStop(stop, true);
       showScreen(2);
       return;
     }
@@ -1153,7 +1551,6 @@
       rec = recommend(intake);
       state.rec = rec;
     } else {
-      // residential detectors-only: still build light heuristics for devices
       rec = buildHeuristics(intake);
       state.rec = Object.assign({ options: null }, rec);
     }
@@ -1163,15 +1560,24 @@
     }
 
     state.showSpecCode = !!(rec && rec.needsSpecCode);
-    const devices = estimateDevices(
-      intake,
-      rec || buildHeuristics(intake)
-    );
+    const devices = estimateDevices(intake, rec || buildHeuristics(intake));
     state.devices = devices;
     state.markup = intake.markup ?? 40;
 
+    state.yellowFlag = pre1980YellowFlag(intake);
+    renderYellowFlag(state.yellowFlag);
+
     if (intake.prints === "none" && intake.jobScale === "residential") {
-      renderHardStop(false); // banner + continue with strategy
+      renderHardStop(
+        {
+          kind: "res-no-prints",
+          title: "Need floor plan / prints before markup or device counts you can bid.",
+          body: "Ask the sales rep: bedrooms, stories, basement, existing smokes, interconnected?, hardwired or battery, AHJ.",
+          copy: HARD_STOP_MSG,
+          showCopy: true,
+        },
+        false
+      );
     } else {
       hideHardStop();
     }
@@ -1184,10 +1590,7 @@
 
     if (state.detectorStrategy) {
       detBlock.hidden = false;
-      renderOptionCards(
-        document.getElementById("detector-options"),
-        state.detectorStrategy
-      );
+      renderOptionCards(document.getElementById("detector-options"), state.detectorStrategy);
     } else {
       detBlock.hidden = true;
     }
@@ -1204,33 +1607,616 @@
       document.getElementById("options").innerHTML = "";
     }
 
-    if (state.showSpecCode) {
-      specBlock.hidden = false;
-    } else {
-      specBlock.hidden = true;
-    }
+    specBlock.hidden = !state.showSpecCode;
 
     renderDevices(intake, devices);
     renderPriceTable(intake, devices, state.markup, state.unitCosts);
     showScreen(2);
   }
 
-  /* ---------- wire events ---------- */
+  /* ---------- TAKEOFF ---------- */
+  const TAKEOFF_KEY = "panelpath_takeoff_v1";
+  const SUPPLIERS = ["ADI", "Grainger", "Windy City Wire", "other"];
+  const WIRE_TYPES = [
+    "18/4 CL2/FPL (keypad / burg zones)",
+    "18/2 FPLR or FPLP (smokes, 2-wire)",
+    "16/2 FPLR / FPLP (notification)",
+    "14/2 FPLP (long NAC / speaker)",
+    "22/4",
+    "22/2",
+    "Other",
+  ];
+
+  const STARTER_CATALOG = [
+    { id: "vista-20p", desc: "Vista-20P panel", mfr: "Honeywell", part: "VISTA-20P", supplier: "ADI" },
+    { id: "6160", desc: "Vista-20P keypad alpha 6160", mfr: "Honeywell", part: "6160", supplier: "ADI" },
+    { id: "6160rf", desc: "Vista keypad wireless 6160RF", mfr: "Honeywell", part: "6160RF", supplier: "ADI" },
+    { id: "6160v", desc: "Vista keypad 6160V (voice)", mfr: "Honeywell", part: "6160V", supplier: "ADI", note: "Prefer when voice likely" },
+    { id: "smoke", desc: "Smoke detector (generic)", mfr: "", part: "", supplier: "ADI" },
+    { id: "heat", desc: "Heat detector (generic)", mfr: "", part: "", supplier: "ADI" },
+    { id: "pull", desc: "Pull station (generic)", mfr: "", part: "", supplier: "ADI" },
+    { id: "horn", desc: "Horn (generic)", mfr: "", part: "", supplier: "ADI" },
+    { id: "speaker-strobe", desc: "Speaker-strobe (generic)", mfr: "", part: "", supplier: "ADI" },
+    { id: "facp", desc: "FACP (generic)", mfr: "", part: "", supplier: "ADI" },
+    { id: "communicator", desc: "Communicator (generic)", mfr: "", part: "", supplier: "ADI" },
+  ];
+
+  function persistTakeoff() {
+    try { sessionStorage.setItem(TAKEOFF_KEY, JSON.stringify(state.takeoff)); } catch (_) {}
+  }
+
+  function suggestKeypadPart(intake, rec) {
+    if (rec && rec.voiceLikely) return "6160v";
+    return "6160";
+  }
+
+  function initTakeoffFromEstimates() {
+    if (!state.intake) return;
+    if (state.takeoff && state.takeoff.initialized && (state.takeoff.devices.length || state.takeoff.wire.length)) {
+      return;
+    }
+    const intake = state.intake;
+    const devices = state.devices || {};
+    const rec = state.rec;
+    const rows = [];
+
+    function push(catId, qty) {
+      if (!qty || qty <= 0) return;
+      const cat = STARTER_CATALOG.find(function (c) { return c.id === catId; }) || {
+        id: catId, desc: catId, mfr: "", part: "", supplier: "ADI"
+      };
+      rows.push({
+        qty: qty,
+        description: cat.desc,
+        manufacturer: cat.mfr,
+        partNumber: cat.part,
+        supplier: cat.supplier,
+        unitCost: "",
+        catalogId: cat.id,
+      });
+    }
+
+    if (devices.panel) {
+      if (intake.jobScale === "residential" || (rec && rec.rule === 1)) {
+        push("vista-20p", devices.panel);
+        push(suggestKeypadPart(intake, rec), 1);
+      } else {
+        push("facp", devices.panel);
+      }
+    }
+    if (devices.fromChecklist && intake.deviceChecklist) {
+      const c = intake.deviceChecklist;
+      function n(k) { return (c[k] && c[k].count) || 0; }
+      push("smoke", n("smoke"));
+      push("heat", n("heat"));
+      push("pull", n("pull"));
+      push("horn", n("horn"));
+      if (n("speaker") || n("strobe")) push("speaker-strobe", n("speaker") + n("strobe"));
+      push("communicator", n("communicator"));
+    } else if (!devices.checklistOnly) {
+      push("smoke", devices.smokes);
+      push("pull", devices.pulls);
+      push("horn", devices.horns);
+      push("communicator", devices.communicator);
+    }
+
+    state.takeoff = {
+      devices: rows,
+      wire: [{
+        runs: 0,
+        wireType: WIRE_TYPES[0],
+        productCode: "",
+        supplier: "Windy City Wire",
+        lengthFt: 0,
+        wastePct: 10,
+        unitCost: "",
+        otherType: "",
+      }],
+      initialized: true,
+    };
+    persistTakeoff();
+  }
+
+  function billFeet(row) {
+    const len = Number(row.lengthFt) || 0;
+    const waste = Number(row.wastePct);
+    const w = Number.isFinite(waste) ? waste : 10;
+    return len * (1 + w / 100);
+  }
+
+  function extWithMarkup(qty, unit, markup) {
+    const q = Number(qty) || 0;
+    const u = unit === "" || unit == null ? NaN : Number(unit);
+    const m = Number(markup) || 0;
+    if (!Number.isFinite(u) || u < 0) return 0;
+    return q * u * (1 + m / 100);
+  }
+
+  function syncTakeoffFromDom() {
+    const tbody = document.getElementById("takeoff-device-body");
+    const wbody = document.getElementById("takeoff-wire-body");
+    if (!tbody || !wbody) return;
+    const devices = [];
+    tbody.querySelectorAll("tr[data-idx]").forEach(function (tr) {
+      devices.push({
+        qty: Number(tr.querySelector('[data-f="qty"]').value) || 0,
+        description: tr.querySelector('[data-f="description"]').value || "",
+        manufacturer: tr.querySelector('[data-f="manufacturer"]').value || "",
+        partNumber: tr.querySelector('[data-f="partNumber"]').value || "",
+        supplier: tr.querySelector('[data-f="supplier"]').value || "ADI",
+        unitCost: tr.querySelector('[data-f="unitCost"]').value,
+        catalogId: tr.getAttribute("data-cat") || "",
+      });
+    });
+    const wire = [];
+    wbody.querySelectorAll("tr[data-idx]").forEach(function (tr) {
+      const otherEl = tr.querySelector('[data-f="otherType"]');
+      wire.push({
+        runs: Number(tr.querySelector('[data-f="runs"]').value) || 0,
+        wireType: tr.querySelector('[data-f="wireType"]').value || "",
+        otherType: otherEl ? otherEl.value || "" : "",
+        productCode: tr.querySelector('[data-f="productCode"]').value || "",
+        supplier: tr.querySelector('[data-f="supplier"]').value || "Windy City Wire",
+        lengthFt: Number(tr.querySelector('[data-f="lengthFt"]').value) || 0,
+        wastePct: Number(tr.querySelector('[data-f="wastePct"]').value),
+        unitCost: tr.querySelector('[data-f="unitCost"]').value,
+      });
+    });
+    state.takeoff.devices = devices;
+    state.takeoff.wire = wire;
+    state.takeoff.initialized = true;
+    persistTakeoff();
+    updateTakeoffFlags();
+    updateTakeoffTotals();
+  }
+
+  function optionList(values, selected) {
+    return values.map(function (s) {
+      return "<option value=\"" + escapeAttr(s) + "\"" + (s === selected ? " selected" : "") + ">" + escapeHtml(s) + "</option>";
+    }).join("");
+  }
+
+  function renderTakeoff() {
+    const intake = state.intake;
+    const markup = state.markup || 40;
+    const mEl = document.getElementById("takeoff-markup");
+    if (mEl) mEl.value = markup;
+
+    const c2t = intake && intake.scope === "check-and-test";
+    const wireNote = document.getElementById("takeoff-wire-note");
+    if (wireNote) {
+      wireNote.textContent = c2t
+        ? "Check-and-test: wire lines optional — electrician furnish. Our labor stays program/test on Results."
+        : "Feet come from the markup. Measure in Bluebeam or on the print, then enter here. Do NOT auto-calculate from upload.";
+    }
+    const wireLabel = document.getElementById("takeoff-wire-heading");
+    if (wireLabel) {
+      wireLabel.textContent = c2t ? "Wire lines (electrician furnish)" : "Wire lines";
+    }
+
+    const guidance = document.getElementById("takeoff-keypad-guidance");
+    if (guidance) {
+      if (state.rec && state.rec.voiceLikely) {
+        guidance.hidden = false;
+        guidance.textContent = "Voice likely — prefer 6160V (voice) keypad over 6160 when using Vista class.";
+      } else {
+        guidance.hidden = true;
+      }
+    }
+
+    const tbody = document.getElementById("takeoff-device-body");
+    tbody.innerHTML = "";
+    (state.takeoff.devices || []).forEach(function (row, idx) {
+      const tr = document.createElement("tr");
+      tr.setAttribute("data-idx", String(idx));
+      if (row.catalogId) tr.setAttribute("data-cat", row.catalogId);
+      const ext = extWithMarkup(row.qty, row.unitCost, markup);
+      const unitVal = row.unitCost === "" || row.unitCost == null ? "" : row.unitCost;
+      tr.innerHTML =
+        "<td><input type=\"number\" min=\"0\" step=\"1\" data-f=\"qty\" value=\"" + escapeAttr(row.qty) + "\" /></td>" +
+        "<td><input type=\"text\" data-f=\"description\" value=\"" + escapeAttr(row.description) + "\" /></td>" +
+        "<td><input type=\"text\" data-f=\"manufacturer\" value=\"" + escapeAttr(row.manufacturer) + "\" /></td>" +
+        "<td><input type=\"text\" data-f=\"partNumber\" value=\"" + escapeAttr(row.partNumber) + "\" placeholder=\"rep edits\" /></td>" +
+        "<td><select data-f=\"supplier\">" + optionList(SUPPLIERS, row.supplier || "ADI") + "</select></td>" +
+        "<td><input type=\"number\" min=\"0\" step=\"0.01\" data-f=\"unitCost\" placeholder=\"—\" value=\"" + escapeAttr(unitVal) + "\" /></td>" +
+        "<td class=\"ext\" data-ext-dev=\"" + idx + "\">" + formatMoney(ext) + "</td>" +
+        "<td><button type=\"button\" class=\"btn btn-ghost btn-tiny\" data-del-dev=\"" + idx + "\">X</button></td>";
+      tbody.appendChild(tr);
+    });
+
+    const wbody = document.getElementById("takeoff-wire-body");
+    wbody.innerHTML = "";
+    (state.takeoff.wire || []).forEach(function (row, idx) {
+      const tr = document.createElement("tr");
+      tr.setAttribute("data-idx", String(idx));
+      const bf = billFeet(row);
+      const ext = extWithMarkup(bf, row.unitCost, markup);
+      const unitVal = row.unitCost === "" || row.unitCost == null ? "" : row.unitCost;
+      const otherHidden = row.wireType === "Other" ? "" : " hidden";
+      tr.innerHTML =
+        "<td><input type=\"number\" min=\"0\" step=\"1\" data-f=\"runs\" value=\"" + escapeAttr(row.runs) + "\" /></td>" +
+        "<td><select data-f=\"wireType\">" + optionList(WIRE_TYPES, row.wireType || WIRE_TYPES[0]) + "</select>" +
+        "<input type=\"text\" data-f=\"otherType\" placeholder=\"Other type…\" value=\"" + escapeAttr(row.otherType || "") + "\"" + otherHidden + " class=\"other-type\" /></td>" +
+        "<td><input type=\"text\" data-f=\"productCode\" value=\"" + escapeAttr(row.productCode || "") + "\" /></td>" +
+        "<td><select data-f=\"supplier\">" + optionList(SUPPLIERS, row.supplier || "Windy City Wire") + "</select></td>" +
+        "<td><input type=\"number\" min=\"0\" step=\"1\" data-f=\"lengthFt\" value=\"" + escapeAttr(row.lengthFt) + "\" /></td>" +
+        "<td><input type=\"number\" min=\"0\" step=\"1\" data-f=\"wastePct\" value=\"" + escapeAttr(Number.isFinite(row.wastePct) ? row.wastePct : 10) + "\" /></td>" +
+        "<td class=\"bill-ft\" data-bill=\"" + idx + "\">" + (Math.round(bf * 10) / 10) + "</td>" +
+        "<td><input type=\"number\" min=\"0\" step=\"0.01\" data-f=\"unitCost\" placeholder=\"—\" value=\"" + escapeAttr(unitVal) + "\" /></td>" +
+        "<td class=\"ext\" data-ext-wire=\"" + idx + "\">" + formatMoney(ext) + "</td>" +
+        "<td><button type=\"button\" class=\"btn btn-ghost btn-tiny\" data-del-wire=\"" + idx + "\">X</button></td>";
+      wbody.appendChild(tr);
+    });
+
+    updateTakeoffFlags();
+    updateTakeoffTotals();
+    renderCatalogList("");
+  }
+
+  function updateTakeoffTotals() {
+    const markupEl = document.getElementById("takeoff-markup");
+    const markup = markupEl ? Number(markupEl.value) : state.markup;
+    const m = Number.isFinite(markup) ? markup : state.markup || 0;
+    state.markup = m;
+    let dTotal = 0;
+    let wTotal = 0;
+    (state.takeoff.devices || []).forEach(function (row, idx) {
+      const ext = extWithMarkup(row.qty, row.unitCost, m);
+      dTotal += ext;
+      const cell = document.querySelector('[data-ext-dev="' + idx + '"]');
+      if (cell) cell.textContent = formatMoney(ext);
+    });
+    (state.takeoff.wire || []).forEach(function (row, idx) {
+      const bf = billFeet(row);
+      const ext = extWithMarkup(bf, row.unitCost, m);
+      wTotal += ext;
+      const bcell = document.querySelector('[data-bill="' + idx + '"]');
+      if (bcell) bcell.textContent = String(Math.round(bf * 10) / 10);
+      const cell = document.querySelector('[data-ext-wire="' + idx + '"]');
+      if (cell) cell.textContent = formatMoney(ext);
+    });
+    const dt = document.getElementById("takeoff-device-total");
+    const wt = document.getElementById("takeoff-wire-total");
+    const gt = document.getElementById("takeoff-grand-total");
+    if (dt) dt.textContent = formatMoney(dTotal);
+    if (wt) wt.textContent = formatMoney(wTotal);
+    if (gt) gt.textContent = formatMoney(dTotal + wTotal);
+  }
+
+  function updateTakeoffFlags() {
+    const flag = document.getElementById("takeoff-wire-flag");
+    if (!flag || !state.intake) return;
+    const hasDevices = (state.takeoff.devices || []).some(function (d) { return (Number(d.qty) || 0) > 0; });
+    const anyWire = (state.takeoff.wire || []).some(function (w) { return (Number(w.lengthFt) || 0) > 0; });
+    const turnkey = state.intake.scope === "turnkey";
+    if (hasDevices && !anyWire) {
+      flag.hidden = false;
+      flag.textContent = turnkey
+        ? "no wire takeoff — not bidable for turnkey."
+        : "no wire takeoff — not bidable for turnkey. (check-and-test: electrician furnish OK)";
+    } else {
+      flag.hidden = true;
+    }
+  }
+
+  function renderCatalogList(filter) {
+    const box = document.getElementById("catalog-results");
+    if (!box) return;
+    const q = (filter || "").toLowerCase().trim();
+    const items = STARTER_CATALOG.filter(function (c) {
+      if (!q) return true;
+      return c.desc.toLowerCase().indexOf(q) >= 0 ||
+        c.part.toLowerCase().indexOf(q) >= 0 ||
+        c.mfr.toLowerCase().indexOf(q) >= 0 ||
+        c.id.indexOf(q) >= 0;
+    });
+    box.innerHTML = items.map(function (c) {
+      return "<button type=\"button\" class=\"catalog-item\" data-add-cat=\"" + escapeAttr(c.id) + "\">" +
+        escapeHtml(c.desc) +
+        (c.part ? " <span class=\"muted\">" + escapeHtml(c.part) + "</span>" : "") +
+        (c.note ? " <span class=\"hint\">" + escapeHtml(c.note) + "</span>" : "") +
+        "</button>";
+    }).join("");
+  }
+
+  function addCatalogRow(catId) {
+    syncTakeoffFromDom();
+    const cat = STARTER_CATALOG.find(function (c) { return c.id === catId; });
+    if (!cat) return;
+    state.takeoff.devices.push({
+      qty: 1, description: cat.desc, manufacturer: cat.mfr, partNumber: cat.part,
+      supplier: cat.supplier, unitCost: "", catalogId: cat.id,
+    });
+    persistTakeoff();
+    renderTakeoff();
+  }
+
+  function addBlankDeviceRow() {
+    syncTakeoffFromDom();
+    state.takeoff.devices.push({
+      qty: 1, description: "", manufacturer: "", partNumber: "", supplier: "ADI", unitCost: "", catalogId: "",
+    });
+    persistTakeoff();
+    renderTakeoff();
+  }
+
+  function addBlankWireRow() {
+    syncTakeoffFromDom();
+    state.takeoff.wire.push({
+      runs: 0, wireType: WIRE_TYPES[0], productCode: "", supplier: "Windy City Wire",
+      lengthFt: 0, wastePct: 10, unitCost: "", otherType: "",
+    });
+    persistTakeoff();
+    renderTakeoff();
+  }
+
+  document.addEventListener("click", function (e) {
+    const addCat = e.target.closest("[data-add-cat]");
+    if (addCat) { addCatalogRow(addCat.getAttribute("data-add-cat")); return; }
+    const delDev = e.target.closest("[data-del-dev]");
+    if (delDev) {
+      syncTakeoffFromDom();
+      state.takeoff.devices.splice(Number(delDev.getAttribute("data-del-dev")), 1);
+      persistTakeoff();
+      renderTakeoff();
+      return;
+    }
+    const delWire = e.target.closest("[data-del-wire]");
+    if (delWire) {
+      syncTakeoffFromDom();
+      state.takeoff.wire.splice(Number(delWire.getAttribute("data-del-wire")), 1);
+      persistTakeoff();
+      renderTakeoff();
+      return;
+    }
+  });
+
+  const takeoffScreen = document.getElementById("screen-takeoff");
+  if (takeoffScreen) {
+    takeoffScreen.addEventListener("input", function (e) {
+      if (e.target.id === "catalog-search") { renderCatalogList(e.target.value); return; }
+      if (e.target.id === "takeoff-markup") { syncTakeoffFromDom(); return; }
+      if (e.target.closest("#takeoff-device-body") || e.target.closest("#takeoff-wire-body")) {
+        if (e.target.getAttribute("data-f") === "wireType") {
+          const tr = e.target.closest("tr");
+          const other = tr && tr.querySelector('[data-f="otherType"]');
+          if (other) other.hidden = e.target.value !== "Other";
+        }
+        syncTakeoffFromDom();
+      }
+    });
+  }
+
+  const btnAddDev = document.getElementById("btn-add-device-row");
+  if (btnAddDev) btnAddDev.addEventListener("click", addBlankDeviceRow);
+  const btnAddWire = document.getElementById("btn-add-wire-row");
+  if (btnAddWire) btnAddWire.addEventListener("click", addBlankWireRow);
+
+  function takeoffSummaryHtml() {
+    if (!state.takeoff || !state.takeoff.initialized) return "";
+    const m = state.markup || 0;
+    let html = "<h4>Takeoff — devices</h4><table><thead><tr><th>Qty</th><th>Description</th><th>Mfr</th><th>Part</th><th>Supplier</th><th>Unit</th><th>Ext</th></tr></thead><tbody>";
+    let dTotal = 0;
+    (state.takeoff.devices || []).forEach(function (row) {
+      const ext = extWithMarkup(row.qty, row.unitCost, m);
+      dTotal += ext;
+      html += "<tr><td>" + row.qty + "</td><td>" + escapeHtml(row.description) + "</td><td>" + escapeHtml(row.manufacturer) +
+        "</td><td>" + escapeHtml(row.partNumber) + "</td><td>" + escapeHtml(row.supplier) + "</td><td>" +
+        (row.unitCost === "" || row.unitCost == null ? "—" : formatMoney(Number(row.unitCost))) +
+        "</td><td>" + formatMoney(ext) + "</td></tr>";
+    });
+    html += "</tbody></table><p>Devices subtotal: " + formatMoney(dTotal) + "</p>";
+
+    const c2t = state.intake && state.intake.scope === "check-and-test";
+    html += "<h4>Takeoff — wire" + (c2t ? " (electrician furnish)" : "") + "</h4>";
+    html += "<table><thead><tr><th>Runs</th><th>Type</th><th>Code</th><th>Supplier</th><th>Length</th><th>Waste%</th><th>Bill ft</th><th>Unit</th><th>Ext</th></tr></thead><tbody>";
+    let wTotal = 0;
+    (state.takeoff.wire || []).forEach(function (row) {
+      const bf = billFeet(row);
+      const ext = extWithMarkup(bf, row.unitCost, m);
+      wTotal += ext;
+      const typeLabel = row.wireType === "Other" ? (row.otherType || "Other") : row.wireType;
+      html += "<tr><td>" + row.runs + "</td><td>" + escapeHtml(typeLabel) + "</td><td>" + escapeHtml(row.productCode || "") +
+        "</td><td>" + escapeHtml(row.supplier) + "</td><td>" + row.lengthFt + "</td><td>" + row.wastePct +
+        "</td><td>" + (Math.round(bf * 10) / 10) + "</td><td>" +
+        (row.unitCost === "" || row.unitCost == null ? "—" : formatMoney(Number(row.unitCost))) +
+        "</td><td>" + formatMoney(ext) + "</td></tr>";
+    });
+    html += "</tbody></table><p>Wire subtotal: " + formatMoney(wTotal) + "</p>";
+    html += "<p><strong>Takeoff grand: " + formatMoney(dTotal + wTotal) + "</strong></p>";
+    return html;
+  }
+
+  function revokePrintUrl() {
+    if (printState.objectUrl) {
+      try { URL.revokeObjectURL(printState.objectUrl); } catch (_) {}
+      printState.objectUrl = null;
+    }
+  }
+
+  function setPrintQualityMsg(text, isWarnOnly) {
+    const el = document.getElementById("print-quality-msg");
+    if (!text) { el.hidden = true; el.textContent = ""; return; }
+    el.hidden = false;
+    el.textContent = text;
+    el.classList.toggle("warn-only", !!isWarnOnly);
+  }
+
+  function sampleImageQuality(img) {
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    const longEdge = Math.max(w, h);
+    printState.longEdge = longEdge;
+    let warn = "";
+    let fail = false;
+    if (longEdge < 800) {
+      warn = "Image long edge under ~800px — likely too small to read devices.";
+      fail = true;
+    }
+    try {
+      const canvas = document.getElementById("print-preview-canvas");
+      const max = 120;
+      const scale = Math.min(1, max / Math.max(w, h));
+      const cw = Math.max(1, Math.round(w * scale));
+      const ch = Math.max(1, Math.round(h * scale));
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, cw, ch);
+      const data = ctx.getImageData(0, 0, cw, ch).data;
+      let dark = 0, light = 0, mid = 0;
+      const step = 16;
+      for (let i = 0; i < data.length; i += step) {
+        const y = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        if (y < 25) dark++;
+        else if (y > 230) light++;
+        else mid++;
+      }
+      const total = dark + light + mid || 1;
+      if (mid / total < 0.05) {
+        const msg = "Heuristic: mostly white/black with little linework — may be blank or unusable.";
+        warn = warn ? warn + " " + msg : msg;
+        fail = true;
+      }
+      canvas.hidden = true;
+    } catch (_) {}
+    printState.qualityWarn = warn;
+    printState.qualityFail = fail;
+    setPrintQualityMsg(warn, !fail);
+  }
+
+  function handlePrintFile(file) {
+    revokePrintUrl();
+    printState.fileName = file ? file.name : "";
+    printState.fileType = file ? file.type || "" : "";
+    printState.longEdge = 0;
+    printState.qualityWarn = "";
+    printState.qualityFail = false;
+    printState.pdfAcceptedNote = false;
+    printState.notReadable = false;
+    printState.looksReadable = false;
+
+    const previewWrap = document.getElementById("print-preview-wrap");
+    const img = document.getElementById("print-preview-img");
+    const canvas = document.getElementById("print-preview-canvas");
+    const label = document.getElementById("print-preview-label");
+    const pdfConfirm = document.getElementById("pdf-readable-confirm");
+    const notNote = document.getElementById("print-not-readable-note");
+    notNote.hidden = true;
+    if (document.getElementById("pdfLooksReadable")) {
+      document.getElementById("pdfLooksReadable").checked = false;
+    }
+
+    if (!file) {
+      previewWrap.hidden = true;
+      img.hidden = true;
+      canvas.hidden = true;
+      pdfConfirm.hidden = true;
+      setPrintQualityMsg("");
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    printState.objectUrl = url;
+    previewWrap.hidden = false;
+
+    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+      printState.fileType = "application/pdf";
+      img.hidden = true;
+      canvas.hidden = true;
+      label.textContent = "PDF accepted — confirm pages are readable. (v1 does not auto-render every page.)";
+      pdfConfirm.hidden = false;
+      printState.pdfAcceptedNote = true;
+      setPrintQualityMsg("PDF accepted — confirm pages are readable.", true);
+      return;
+    }
+
+    pdfConfirm.hidden = true;
+    img.hidden = false;
+    img.onload = function () {
+      label.textContent = file.name + " — " + (img.naturalWidth || 0) + "x" + (img.naturalHeight || 0);
+      sampleImageQuality(img);
+    };
+    img.onerror = function () {
+      setPrintQualityMsg("Could not preview image.", false);
+      printState.qualityFail = true;
+    };
+    img.src = url;
+  }
+
+  function toggleHazardOther() {
+    const other = document.getElementById("hazardOther");
+    const wrap = document.getElementById("hazard-other-text-wrap");
+    if (!wrap) return;
+    wrap.hidden = !(other && other.checked);
+  }
+
+  function toggleNoneHazard(e) {
+    const none = document.getElementById("hazardNone");
+    if (!none) return;
+    if (e && e.target && e.target.name === "hazard" && e.target.value === "none" && e.target.checked) {
+      document.querySelectorAll('input[name="hazard"]').forEach((cb) => {
+        if (cb.value !== "none") cb.checked = false;
+      });
+      toggleHazardOther();
+    } else if (e && e.target && e.target.name === "hazard" && e.target.value !== "none" && e.target.checked) {
+      none.checked = false;
+    }
+  }
+
   const form = document.getElementById("intake-form");
+  buildDeviceChecklistUI();
+
   form.addEventListener("change", (e) => {
-    if (
-      e.target.name === "jobScale" ||
-      e.target.name === "scope" ||
-      e.target.name === "prints"
-    ) {
+    const n = e.target.name;
+    if (n === "jobScale" || n === "scope" || n === "prints" || n === "jobClass" || n === "resStories" || n === "stories") {
       updateIntakeVisibility();
     }
+    if (n === "hazard") {
+      toggleNoneHazard(e);
+      toggleHazardOther();
+    }
+    if (n === "occupantLoadUnknown") {
+      const unk = form.elements.occupantLoadUnknown.checked;
+      form.elements.occupantLoad.disabled = unk;
+      if (unk) form.elements.occupantLoad.value = "";
+    }
+    if (n === "yearBuiltUnknown") {
+      const unk = form.elements.yearBuiltUnknown.checked;
+      form.elements.yearBuilt.disabled = unk;
+      if (unk) form.elements.yearBuilt.value = "";
+    }
+    if (n === "pdfLooksReadable") {
+      printState.looksReadable = !!e.target.checked;
+      if (e.target.checked) printState.notReadable = false;
+      document.getElementById("print-not-readable-note").hidden = true;
+    }
+  });
+
+  const printFile = document.getElementById("printFile");
+  if (printFile) {
+    printFile.addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      handlePrintFile(f || null);
+    });
+  }
+
+  document.getElementById("btn-print-not-readable").addEventListener("click", () => {
+    printState.notReadable = true;
+    printState.looksReadable = false;
+    if (form.elements.pdfLooksReadable) form.elements.pdfLooksReadable.checked = false;
+    document.getElementById("print-not-readable-note").hidden = false;
+    setPrintQualityMsg(PRINT_NOT_READABLE_MSG, false);
   });
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const err = document.getElementById("intake-error");
     const intake = readForm(e.target);
+    intake.printHasFile = !!printState.fileName;
+    intake.printNotReadable = !!printState.notReadable;
+    intake.printQualityWarn = printState.qualityWarn || "";
+    intake.printLooksReadable = formLooksReadable() || !!printState.looksReadable;
     const missing = softValidate(intake);
     if (missing.length) {
       err.hidden = false;
@@ -1239,18 +2225,14 @@
     }
     err.hidden = true;
     state.intake = intake;
-    try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(intake));
-    } catch (_) {}
+    state.takeoff = { devices: [], wire: [], initialized: false };
+    try { sessionStorage.removeItem(TAKEOFF_KEY); } catch (_) {}
+    try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(intake)); } catch (_) {}
     goResults();
   });
 
-  document.getElementById("btn-back-intake").addEventListener("click", () => {
-    showScreen(1);
-  });
-  document.getElementById("btn-hardstop-back").addEventListener("click", () => {
-    showScreen(1);
-  });
+  document.getElementById("btn-back-intake").addEventListener("click", () => showScreen(1));
+  document.getElementById("btn-hardstop-back").addEventListener("click", () => showScreen(1));
 
   document.getElementById("btn-copy-hardstop").addEventListener("click", () => {
     const ta = document.getElementById("hard-stop-msg");
@@ -1259,39 +2241,27 @@
     const done = () => {
       toast.hidden = false;
       toast.textContent = "Copied.";
-      setTimeout(() => {
-        toast.hidden = true;
-      }, 1500);
+      setTimeout(() => { toast.hidden = true; }, 1500);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done).catch(() => {
         ta.select();
-        try {
-          document.execCommand("copy");
-          done();
-        } catch (_) {}
+        try { document.execCommand("copy"); done(); } catch (_) {}
       });
     } else {
       ta.select();
-      try {
-        document.execCommand("copy");
-        done();
-      } catch (_) {}
+      try { document.execCommand("copy"); done(); } catch (_) {}
     }
   });
 
   document.getElementById("btn-summary").addEventListener("click", () => {
+    syncTakeoffFromDom();
     renderSummary();
     showScreen(3);
   });
 
-  document.getElementById("btn-back-results").addEventListener("click", () => {
-    showScreen(2);
-  });
-
-  document.getElementById("btn-print").addEventListener("click", () => {
-    window.print();
-  });
+  document.getElementById("btn-back-results").addEventListener("click", () => showScreen(2));
+  document.getElementById("btn-print").addEventListener("click", () => window.print());
 
   document.getElementById("btn-exact-vision").addEventListener("click", () => {
     const msg = document.getElementById("exact-vision-msg");
@@ -1303,20 +2273,48 @@
     if (e.target.matches("input[data-cost]")) recalcPrices();
   });
   document.getElementById("markup-live").addEventListener("input", recalcPrices);
-
   ["price-body-spec", "price-body-code"].forEach((id) => {
     document.getElementById(id).addEventListener("input", (e) => {
       if (e.target.matches("input[data-cost]")) recalcPrices();
     });
   });
-  document
-    .getElementById("markup-live-spec")
-    .addEventListener("input", recalcPrices);
-  document
-    .getElementById("markup-live-code")
-    .addEventListener("input", recalcPrices);
+  document.getElementById("markup-live-spec").addEventListener("input", recalcPrices);
+  document.getElementById("markup-live-code").addEventListener("input", recalcPrices);
 
-  /* ---------- restore ---------- */
+  // Takeoff nav
+  const btnTakeoff = document.getElementById("btn-takeoff");
+  if (btnTakeoff) {
+    btnTakeoff.addEventListener("click", () => {
+      if (state.showHardStopOnly) return;
+      initTakeoffFromEstimates();
+      renderTakeoff();
+      showScreen("takeoff");
+    });
+  }
+  const btnTakeoffBack = document.getElementById("btn-takeoff-back");
+  if (btnTakeoffBack) {
+    btnTakeoffBack.addEventListener("click", () => {
+      syncTakeoffFromDom();
+      showScreen(2);
+    });
+  }
+  const btnTakeoffSummary = document.getElementById("btn-takeoff-summary");
+  if (btnTakeoffSummary) {
+    btnTakeoffSummary.addEventListener("click", () => {
+      syncTakeoffFromDom();
+      renderSummary();
+      showScreen(3);
+    });
+  }
+  const btnSummaryBackTakeoff = document.getElementById("btn-summary-back-takeoff");
+  if (btnSummaryBackTakeoff) {
+    btnSummaryBackTakeoff.addEventListener("click", () => {
+      initTakeoffFromEstimates();
+      renderTakeoff();
+      showScreen("takeoff");
+    });
+  }
+
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -1339,15 +2337,23 @@
       if (p.markup != null) state.markup = p.markup;
     }
   } catch (_) {}
+  try {
+    const traw = sessionStorage.getItem(TAKEOFF_KEY);
+    if (traw) state.takeoff = JSON.parse(traw);
+  } catch (_) {}
 
   showScreen(1);
 
   window.PanelPath = {
-    DISCLAIMER,
-    HARD_STOP_MSG,
-    recommend,
-    estimateDevices,
-    buildHeuristics,
-    detectorStrategy,
+    DISCLAIMER: DISCLAIMER,
+    HARD_STOP_MSG: HARD_STOP_MSG,
+    OCCUPANT_LOAD_STOP: OCCUPANT_LOAD_STOP,
+    DEVICES_PRINT_STOP: DEVICES_PRINT_STOP,
+    PRINT_NOT_READABLE_MSG: PRINT_NOT_READABLE_MSG,
+    recommend: recommend,
+    estimateDevices: estimateDevices,
+    buildHeuristics: buildHeuristics,
+    detectorStrategy: detectorStrategy,
+    commercialHardStop: commercialHardStop,
   };
 })();

@@ -748,3 +748,271 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 main {
   max-width: 860px;
 }
+
+/* ---- Job class / hazard / load helpers ---- */
+.sub-check {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px dashed var(--border);
+}
+
+.check-grid {
+  display: grid;
+  gap: 0.5rem;
+}
+
+@media (min-width: 520px) {
+  .check-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.load-row {
+  align-items: end;
+}
+
+.load-unknown {
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+}
+
+.check-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  min-height: var(--tap);
+  padding: 0.55rem 0.65rem;
+  background: var(--chip);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.check-field input {
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.1rem;
+  flex-shrink: 0;
+  accent-color: var(--amber);
+}
+
+/* ---- Prints upload / checklist ---- */
+.prints-block {
+  margin: 1rem 0 1.25rem;
+  padding: 0.85rem 0.9rem 1rem;
+  border: 1px solid var(--amber-dim);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--amber-bg), var(--bg-elev));
+}
+
+.print-preview-wrap {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.print-preview-wrap img,
+.print-preview-wrap canvas {
+  max-width: 100%;
+  max-height: 280px;
+  border-radius: 4px;
+}
+
+.print-quality-msg {
+  margin: 0.5rem 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  background: rgba(255, 107, 74, 0.12);
+  border: 1px solid var(--danger);
+  border-left: 4px solid var(--danger);
+}
+
+.print-quality-msg.warn-only {
+  background: var(--amber-bg);
+  border-color: var(--amber-dim);
+  border-left-color: var(--amber);
+  color: var(--text);
+}
+
+.print-actions {
+  margin: 0.75rem 0;
+}
+
+.alert-hint {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.device-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.device-check-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+}
+
+.device-check-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 40px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.device-check-row input[type="checkbox"] {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--amber);
+}
+
+.device-check-row input[type="number"] {
+  width: 5.5rem;
+  min-height: 40px;
+  margin: 0;
+}
+
+#btn-auto-read[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  width: 100%;
+  white-space: normal;
+  line-height: 1.3;
+  font-size: 0.85rem;
+}
+
+/* ---- Yellow flag (pre-1980) — not a hard stop ---- */
+.yellow-flag-card {
+  background: rgba(245, 197, 24, 0.18);
+  border: 2px solid var(--amber);
+  border-left: 6px solid #ffe066;
+  border-radius: var(--radius);
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.25rem;
+}
+
+.yellow-flag-card h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+  color: var(--amber);
+}
+
+.yellow-flag-card p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.hard-stop-card.is-block-results #results-main {
+  display: none;
+}
+
+/* ---- Takeoff ---- */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0.5rem 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+}
+
+.takeoff-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+  font-size: 0.85rem;
+}
+
+.takeoff-table th,
+.takeoff-table td {
+  padding: 0.4rem 0.35rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.takeoff-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.takeoff-table input[type="text"],
+.takeoff-table input[type="number"],
+.takeoff-table select {
+  min-height: 40px;
+  width: 100%;
+  margin: 0;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.4rem;
+}
+
+.takeoff-table .btn-tiny {
+  min-height: 36px;
+  min-width: 36px;
+  padding: 0.25rem 0.4rem;
+}
+
+.catalog-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.catalog-item {
+  text-align: left;
+  background: var(--chip);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  min-height: var(--tap);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.catalog-item:hover,
+.catalog-item:focus {
+  border-color: var(--amber);
+  outline: none;
+}
+
+.catalog-item .muted {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.other-type {
+  margin-top: 0.35rem !important;
+}
+
+#takeoff-wire-flag:not([hidden]) {
+  display: block;
+  margin: 0.75rem 0;
+}
+
+#screen-takeoff[hidden] {
+  display: none !important;
+}

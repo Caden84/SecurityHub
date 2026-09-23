@@ -46,12 +46,20 @@
         </fieldset>
 
         <div id="intake-body" class="intake-body" hidden>
-          <fieldset>
-            <legend>Job</legend>
-            <div class="radio-row" role="radiogroup" aria-required="true">
-              <label class="chip"><input type="radio" name="job" value="new" /> New</label>
-              <label class="chip"><input type="radio" name="job" value="replace" /> Replace</label>
-              <label class="chip"><input type="radio" name="job" value="add-on" /> Add-on</label>
+          <fieldset class="gate-fieldset">
+            <legend>Job class <em>(required)</em></legend>
+            <div class="radio-row wrap" role="radiogroup" aria-required="true">
+              <label class="chip"><input type="radio" name="jobClass" value="new" /> New system</label>
+              <label class="chip"><input type="radio" name="jobClass" value="add-on" /> Add-on to existing</label>
+              <label class="chip"><input type="radio" name="jobClass" value="takeover" /> Takeover of existing</label>
+              <label class="chip"><input type="radio" name="jobClass" value="replacement" /> Replacement</label>
+            </div>
+            <div id="devices-on-print-wrap" class="sub-check" hidden>
+              <label class="check-field">
+                <input type="checkbox" name="devicesOnPrint" />
+                <span>Existing devices are marked on the print</span>
+              </label>
+              <p class="hint">Required for add-on, takeover, or replacement.</p>
             </div>
           </fieldset>
 
@@ -143,7 +151,7 @@
             <h3 class="branch-title">Commercial</h3>
 
             <label class="field">
-              <span>Occupancy <em>(required)</em></span>
+              <span>Occupancy <em>(required — no skip)</em></span>
               <select name="occupancy">
                 <option value="">Select…</option>
                 <option value="business">Business</option>
@@ -184,10 +192,48 @@
               </div>
             </fieldset>
 
-            <label class="field">
-              <span>Occupant load <em>(optional)</em></span>
-              <input type="number" name="occupantLoad" min="0" step="1" placeholder="e.g. 250" />
-            </label>
+            <fieldset>
+              <legend>Occupant load <em>(required)</em></legend>
+              <div class="row-2 load-row">
+                <label class="field">
+                  <span>Number</span>
+                  <input type="number" name="occupantLoad" min="0" step="1" placeholder="e.g. 250" />
+                </label>
+                <label class="check-field load-unknown">
+                  <input type="checkbox" name="occupantLoadUnknown" id="occupantLoadUnknown" />
+                  <span>Unknown</span>
+                </label>
+              </div>
+              <p class="hint">Commercial: unknown load blocks panel A/B/C — get it from owner, architect, or posted load.</p>
+            </fieldset>
+
+            <fieldset>
+              <legend>Year built <em>(required)</em></legend>
+              <div class="row-2 load-row">
+                <label class="field">
+                  <span>Year</span>
+                  <input type="number" name="yearBuilt" min="1800" max="2100" step="1" placeholder="e.g. 1972" />
+                </label>
+                <label class="check-field load-unknown">
+                  <input type="checkbox" name="yearBuiltUnknown" id="yearBuiltUnknown" />
+                  <span>Unknown</span>
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Hazards <em>(multi — pick all that apply)</em></legend>
+              <div class="check-grid">
+                <label class="check-field"><input type="checkbox" name="hazard" value="asbestos" /> Asbestos suspected</label>
+                <label class="check-field"><input type="checkbox" name="hazard" value="lead" /> Lead paint or lead components</label>
+                <label class="check-field" id="hazard-other-wrap"><input type="checkbox" name="hazard" value="other" id="hazardOther" /> Other</label>
+                <label class="check-field"><input type="checkbox" name="hazard" value="none" id="hazardNone" /> None known</label>
+              </div>
+              <label class="field" id="hazard-other-text-wrap" hidden>
+                <span>Other hazard detail</span>
+                <input type="text" name="hazardOtherText" placeholder="Describe…" autocomplete="off" />
+              </label>
+            </fieldset>
 
             <fieldset>
               <legend>System <em>(required)</em></legend>
@@ -226,6 +272,40 @@
               </div>
             </fieldset>
 
+
+            <!-- Prints upload + quality + device checklist (commercial with drawings) -->
+            <div id="prints-upload-block" class="prints-block" hidden>
+              <h3 class="branch-title">Prints upload</h3>
+              <p class="hint">High-quality scan or vector PDF. Phone photo OK if straight-on and well-lit. File stays in this session only (intake fields persist; file may not survive refresh).</p>
+              <label class="field">
+                <span>Drawing file <em>(PDF or image)</em></span>
+                <input type="file" name="printFile" id="printFile" accept="application/pdf,image/*" />
+              </label>
+              <div id="print-preview-wrap" class="print-preview-wrap" hidden>
+                <img id="print-preview-img" alt="Print preview" hidden />
+                <canvas id="print-preview-canvas" hidden></canvas>
+                <p id="print-preview-label" class="hint"></p>
+              </div>
+              <p id="print-quality-msg" class="print-quality-msg" hidden></p>
+              <div id="pdf-readable-confirm" class="sub-check" hidden>
+                <label class="check-field">
+                  <input type="checkbox" name="pdfLooksReadable" id="pdfLooksReadable" />
+                  <span>Looks readable (I checked the pages)</span>
+                </label>
+              </div>
+              <div class="actions print-actions">
+                <button type="button" class="btn btn-secondary" id="btn-print-not-readable">This print is not readable</button>
+              </div>
+              <p id="print-not-readable-note" class="hint alert-hint" hidden>Marked not readable — upload a better file or results stay blocked.</p>
+
+              <h3 class="branch-title">Device checklist <em>(tick off the print)</em></h3>
+              <p class="hint">We do not claim auto-extract from the drawing. Counts feed the estimate qty.</p>
+              <div id="device-checklist" class="device-checklist">
+                <!-- filled by JS -->
+              </div>
+              <button type="button" class="btn btn-ghost" id="btn-auto-read" disabled title="Coming">Auto-read print — Coming — we will not fake a napkin reader.</button>
+            </div>
+
             <fieldset>
               <legend>Manufacturer lock</legend>
               <div class="radio-row wrap">
@@ -236,6 +316,42 @@
                 <label class="chip"><input type="radio" name="mfrLock" value="Simplex" /> Simplex</label>
                 <label class="chip"><input type="radio" name="mfrLock" value="other" /> Other</label>
               </div>
+            </fieldset>
+          </div>
+
+
+          <!-- Ceiling height + Lift (commercial always; residential when stories ≥ 2) -->
+          <div id="ceiling-lift-block" class="branch-block" hidden>
+            <h3 class="branch-title">Ceiling height + Lift</h3>
+            <p class="hint" id="ceiling-lift-hint">Required on commercial. Also required on residential when stories ≥ 2.</p>
+            <div class="row-2">
+              <label class="field">
+                <span>Typical finished ceiling (ft) <em>(required)</em></span>
+                <input type="number" name="ceilingTypical" min="6" max="100" step="0.5" placeholder="e.g. 9" />
+              </label>
+              <label class="field">
+                <span>Highest ceiling / atrium / warehouse (ft) <em>(optional)</em></span>
+                <input type="number" name="ceilingHighest" min="6" max="200" step="0.5" placeholder="e.g. 18" />
+              </label>
+            </div>
+            <fieldset>
+              <legend>Ceiling type</legend>
+              <div class="radio-row wrap" role="radiogroup">
+                <label class="chip"><input type="radio" name="ceilingType" value="drywall" /> Drywall</label>
+                <label class="chip"><input type="radio" name="ceilingType" value="drop-tile" /> Drop-tile</label>
+                <label class="chip"><input type="radio" name="ceilingType" value="open-joist" /> Open joist</label>
+                <label class="chip"><input type="radio" name="ceilingType" value="warehouse-deck" /> Warehouse deck</label>
+                <label class="chip"><input type="radio" name="ceilingType" value="unknown" checked /> Unknown</label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>Lift required</legend>
+              <div class="radio-row" role="radiogroup">
+                <label class="chip"><input type="radio" name="liftRequired" value="yes" /> Yes</label>
+                <label class="chip"><input type="radio" name="liftRequired" value="no" /> No</label>
+                <label class="chip"><input type="radio" name="liftRequired" value="unknown" checked /> Unknown</label>
+              </div>
+              <p class="hint">High ceiling + check-and-test-only still needs the electrician to have a lift; our crew needs one if we hang or test high devices.</p>
             </fieldset>
           </div>
 
@@ -267,19 +383,24 @@
         Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.
       </div>
 
-      <!-- Hard stop for commercial no-prints (or residential warning) -->
+      <!-- Amber hard-stop / yellow flag cards -->
       <div id="hard-stop" class="hard-stop-card" hidden>
-        <h3>Need floor plan / prints before markup or device counts you can bid.</h3>
-        <p>Ask the sales rep: bedrooms, stories, basement, existing smokes, interconnected?, hardwired or battery, AHJ.</p>
-        <label class="field">
+        <h3 id="hard-stop-title">Need floor plan / prints before markup or device counts you can bid.</h3>
+        <p id="hard-stop-body">Ask the sales rep: bedrooms, stories, basement, existing smokes, interconnected?, hardwired or battery, AHJ.</p>
+        <label class="field" id="hard-stop-copy-wrap">
           <span>Copy-paste for the customer / GC</span>
-          <textarea id="hard-stop-msg" readonly rows="3">I can price this once I have prints (or a simple floor sketch with rooms labeled). Without that I’m guessing and the bid will be wrong.</textarea>
+          <textarea id="hard-stop-msg" readonly rows="4"></textarea>
         </label>
         <div class="actions">
           <button type="button" class="btn btn-secondary" id="btn-copy-hardstop">Copy message</button>
           <button type="button" class="btn btn-ghost" id="btn-hardstop-back">← Back to Intake</button>
         </div>
         <p id="copy-toast" class="hint" hidden>Copied.</p>
+      </div>
+
+      <div id="yellow-flag" class="yellow-flag-card" hidden>
+        <h3>Pre-1980 hazard flag</h3>
+        <p id="yellow-flag-body">Pre-1980 — confirm asbestos/lead before demo or device swap. Not a survey.</p>
       </div>
 
       <div id="results-main">
@@ -399,8 +520,93 @@
 
         <div class="actions no-print">
           <button type="button" class="btn btn-ghost" id="btn-back-intake">← Back to Intake</button>
+          <button type="button" class="btn btn-secondary" id="btn-takeoff">Takeoff →</button>
           <button type="button" class="btn btn-primary" id="btn-summary">View summary →</button>
         </div>
+      </div>
+    </section>
+
+
+    <!-- SCREEN TAKEOFF -->
+    <section id="screen-takeoff" class="screen" hidden aria-labelledby="st-title">
+      <h2 id="st-title" class="screen-title">Takeoff</h2>
+      <div class="disclaimer-banner" role="note">
+        Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.
+      </div>
+      <p class="hint">Starter catalog only — not a full ADI scrape. Edit part numbers. Do not invent SKUs we don’t know. Unit costs stay empty.</p>
+      <p id="takeoff-keypad-guidance" class="print-quality-msg warn-only" hidden></p>
+
+      <label class="field inline-markup">
+        <span>Markup % (takeoff extended)</span>
+        <input type="number" id="takeoff-markup" min="0" step="1" />
+      </label>
+
+      <h3 class="subhead">Add from catalog</h3>
+      <label class="field">
+        <span>Search catalog</span>
+        <input type="search" id="catalog-search" placeholder="6160, smoke, Vista…" autocomplete="off" />
+      </label>
+      <div id="catalog-results" class="catalog-results"></div>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" id="btn-add-device-row">+ Blank device row</button>
+      </div>
+
+      <h3 class="subhead">Device lines</h3>
+      <div class="table-scroll">
+        <table class="takeoff-table" id="takeoff-device-table">
+          <thead>
+            <tr>
+              <th>Qty</th>
+              <th>Description</th>
+              <th>Mfr</th>
+              <th>Part #</th>
+              <th>Supplier</th>
+              <th>Unit $</th>
+              <th>Extended</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="takeoff-device-body"></tbody>
+          <tfoot>
+            <tr><td colspan="6">Devices subtotal</td><td id="takeoff-device-total" class="total">$0.00</td><td></td></tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <h3 class="subhead" id="takeoff-wire-heading">Wire lines</h3>
+      <p class="hint" id="takeoff-wire-note">Feet come from the markup. Measure in Bluebeam or on the print, then enter here.</p>
+      <p id="takeoff-wire-flag" class="yellow-flag-card" hidden></p>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" id="btn-add-wire-row">+ Wire row</button>
+      </div>
+      <div class="table-scroll">
+        <table class="takeoff-table" id="takeoff-wire-table">
+          <thead>
+            <tr>
+              <th>Runs</th>
+              <th>Wire type</th>
+              <th>Product code</th>
+              <th>Supplier</th>
+              <th>Length ft</th>
+              <th>Waste %</th>
+              <th>Bill ft</th>
+              <th>Unit $</th>
+              <th>Extended</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="takeoff-wire-body"></tbody>
+          <tfoot>
+            <tr><td colspan="8">Wire subtotal</td><td id="takeoff-wire-total" class="total">$0.00</td><td></td></tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <p class="subhead">Takeoff grand: <span id="takeoff-grand-total" class="total">$0.00</span></p>
+
+      <div class="actions no-print">
+        <button type="button" class="btn btn-ghost" id="btn-takeoff-back">← Back to Results</button>
+        <button type="button" class="btn btn-primary" id="btn-takeoff-summary">View summary →</button>
       </div>
     </section>
 
@@ -414,6 +620,7 @@
 
       <div class="actions no-print summary-actions">
         <button type="button" class="btn btn-ghost" id="btn-back-results">← Back to Results</button>
+        <button type="button" class="btn btn-secondary" id="btn-summary-back-takeoff">← Takeoff</button>
         <button type="button" class="btn btn-primary" id="btn-print">Print</button>
       </div>
 
