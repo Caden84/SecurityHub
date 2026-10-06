@@ -3,13 +3,21 @@
  * Static decision-support for fire/security sales reps.
  * No invented list prices. No backend. No fake floor plans.
  *
- * Commercial hard stops (block A/B/C):
- *   - no prints
- *   - occupant load unknown
- *   - add-on/takeover/replacement without devices marked on print
- *   - has prints but no upload / not readable / quality reject
+ * Incomplete jobs stay open. Results lists each hole and one
+ * plain-language question back to the rep. Panel path and Takeoff
+ * stay available, marked incomplete until those Intake fields are filled.
  *
- * Ceiling + lift: required commercial; residential when stories >= 2.
+ * Holes:
+ *   - no prints
+ *   - unreadable or missing upload
+ *   - occupant load unknown
+ *   - add-on/takeover/replacement without devices marked on the print
+ *   - year built blank
+ *   - hazards blank
+ *   - ceiling height blank
+ *   - lift not answered (commercial, or residential stories >= 2)
+ *
+ * Ceiling + lift: asked on commercial; residential when stories >= 2.
  */
 
 (function () {
@@ -19,15 +27,6 @@
   const PRICES_KEY = "panelpath_prices_v3";
   const DISCLAIMER =
     "Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.";
-
-  const HARD_STOP_MSG =
-    "I can price this once I have prints (or a simple floor sketch with rooms labeled). Without that I'm guessing and the bid will be wrong.";
-
-  const OCCUPANT_LOAD_STOP =
-    "Occupant load is how we know voice, pulls, and notification. Get it from the owner, architect, or posted occupant load. Guessing is how a school gets horns.";
-
-  const DEVICES_PRINT_STOP =
-    "Takeover/add-on without devices on the print is a blind bid. Mark smokes, pulls, horns/speakers, FACP, annunciator on the drawing first.";
 
   const PRINT_NOT_READABLE_MSG =
     "This isn't a usable drawing (napkin / blur / dark photo). Need a straight-on, well-lit scan or PDF export from CAD. I can't bid off this.";
@@ -73,6 +72,7 @@
     detectorStrategy: null,
     showHardStopOnly: false,
     hardStopKind: null,
+    missingItems: [],
     showSpecCode: false,
     yellowFlag: null,
     unitCosts: {
@@ -146,14 +146,6 @@
     const gatesReady = !!(gate.jobScale && gate.scope && gate.prints);
 
     if (!gatesReady) {
-      body.hidden = true;
-      res.hidden = true;
-      com.hidden = true;
-      ceil.hidden = true;
-      return;
-    }
-
-    if (gate.jobScale === "commercial" && gate.prints === "none") {
       body.hidden = true;
       res.hidden = true;
       com.hidden = true;
@@ -362,11 +354,6 @@
     if (!intake.jobScale) missing.push("Job scale");
     if (!intake.scope) missing.push("Scope");
     if (!intake.prints) missing.push("Prints");
-
-    if (intake.jobScale === "commercial" && intake.prints === "none") {
-      return missing;
-    }
-
     if (!intake.jobClass) missing.push("Job class");
 
     if (intake.jobScale === "residential") {
@@ -377,29 +364,9 @@
       if (intake.prints === "have" && (intake.sqFt == null || intake.sqFt < 1)) {
         missing.push("Approx sq ft");
       }
-      if (!intake.occupantLoadUnknown && (intake.occupantLoad == null || intake.occupantLoad < 0)) {
-        missing.push("Occupant load (number or Unknown)");
-      }
-      if (!intake.yearBuiltUnknown && (intake.yearBuilt == null || intake.yearBuilt < 1800)) {
-        missing.push("Year built (number or Unknown)");
-      }
-      if (!intake.hazards || !intake.hazards.length) {
-        missing.push("Hazards");
-      }
       if (intake.hazards && intake.hazards.includes("other") && !intake.hazardOtherText) {
         missing.push("Other hazard detail");
       }
-      if (intake.prints === "have" && !printState.fileName) {
-        missing.push("Prints upload (PDF or image)");
-      }
-    }
-
-    if (needsCeilingLift(intake.jobScale, intake.stories)) {
-      if (intake.ceilingTypical == null || intake.ceilingTypical <= 0) {
-        missing.push("Typical finished ceiling (ft)");
-      }
-      if (!intake.ceilingType) missing.push("Ceiling type");
-      if (!intake.liftRequired) missing.push("Lift required");
     }
 
     return missing;
@@ -410,27 +377,57 @@
     return !!(form.elements.pdfLooksReadable && form.elements.pdfLooksReadable.checked);
   }
 
-  function commercialHardStop(intake) {
-    if (intake.jobScale !== "commercial") return null;
+  function listMissingItems(intake) {
+    const items = [];
 
     if (intake.prints === "none") {
-      return {
-        kind: "no-prints",
-        title: "Need floor plan / prints before markup or device counts you can bid.",
-        body: "Commercial jobs need drawings before panel A/B/C or bid device counts.",
-        copy: HARD_STOP_MSG,
-        showCopy: true,
-      };
+      items.push({
+        id: "no-prints",
+        label: "No prints",
+        question:
+          "Do you have drawings, or a simple floor sketch with the rooms labeled? I need that before the takeoff can be finished.",
+      });
     }
 
-    if (intake.occupantLoadUnknown) {
-      return {
-        kind: "occupant-load",
-        title: "Occupant load required — cannot open commercial results.",
-        body: OCCUPANT_LOAD_STOP,
-        copy: OCCUPANT_LOAD_STOP,
-        showCopy: true,
-      };
+    if (intake.jobScale === "commercial" && intake.prints === "have") {
+      const fileName = printState.fileName || intake.printFileName || "";
+      const hasFile = !!fileName;
+      const isPdf =
+        hasFile &&
+        (printState.fileType === "application/pdf" || /\.pdf$/i.test(fileName));
+      const pdfUnconfirmed =
+        isPdf && !intake.printLooksReadable && !formLooksReadable();
+      const markedUnreadable = !!(printState.notReadable || intake.printNotReadable);
+      if (!hasFile || markedUnreadable || printState.qualityFail || pdfUnconfirmed) {
+        let question;
+        if (!hasFile) {
+          question =
+            "I don't have a drawing file. Can you upload a PDF or a straight-on, well-lit photo of the plan?";
+        } else if (pdfUnconfirmed && !markedUnreadable && !printState.qualityFail) {
+          question =
+            "Can you confirm the PDF pages are readable, or send a clearer file?";
+        } else {
+          question =
+            "I can't read the drawing you uploaded. Can you send a straight-on, well-lit scan or a PDF export from CAD?";
+        }
+        items.push({
+          id: "unreadable-upload",
+          label: "Unreadable upload",
+          question: question,
+        });
+      }
+    }
+
+    if (
+      intake.jobScale === "commercial" &&
+      (intake.occupantLoadUnknown || intake.occupantLoad == null)
+    ) {
+      items.push({
+        id: "occupant-load",
+        label: "Occupant load unknown",
+        question:
+          "What's the occupant load? I need the number from the owner, the architect, or the posted load.",
+      });
     }
 
     const jc = intake.jobClass;
@@ -438,61 +435,57 @@
       (jc === "add-on" || jc === "takeover" || jc === "replacement") &&
       !intake.devicesOnPrint
     ) {
-      return {
-        kind: "devices-on-print",
-        title: "Existing devices must be marked on the print.",
-        body: DEVICES_PRINT_STOP,
-        copy: DEVICES_PRINT_STOP,
-        showCopy: true,
-      };
+      items.push({
+        id: "devices-on-print",
+        label: "Devices not marked on the print",
+        question:
+          "Can you mark the existing devices on the print — smokes, pulls, horns or speakers, the panel, and the annunciator?",
+      });
     }
 
-    if (intake.prints === "have") {
-      if (!printState.fileName && !intake.printHasFile) {
-        return {
-          kind: "no-upload",
-          title: "Upload drawings before commercial results.",
-          body: "You said you have drawings — attach a PDF or image before panel A/B/C.",
-          copy: HARD_STOP_MSG,
-          showCopy: true,
-        };
+    if (
+      intake.jobScale === "commercial" &&
+      !intake.yearBuiltUnknown &&
+      intake.yearBuilt == null
+    ) {
+      items.push({
+        id: "year-built",
+        label: "Year built blank",
+        question: "What year was the building built?",
+      });
+    }
+
+    if (
+      intake.jobScale === "commercial" &&
+      (!intake.hazards || !intake.hazards.length)
+    ) {
+      items.push({
+        id: "hazards",
+        label: "Hazards blank",
+        question:
+          "What hazards should I plan for — asbestos, lead, something else, or none known?",
+      });
+    }
+
+    if (needsCeilingLift(intake.jobScale, intake.stories)) {
+      if (intake.ceilingTypical == null || intake.ceilingTypical <= 0) {
+        items.push({
+          id: "ceiling-height",
+          label: "Ceiling height blank",
+          question: "What's the typical finished ceiling height, in feet?",
+        });
       }
-      if (printState.notReadable || intake.printNotReadable) {
-        return {
-          kind: "not-readable",
-          title: "This print is not readable.",
-          body: PRINT_NOT_READABLE_MSG,
-          copy: PRINT_NOT_READABLE_MSG,
-          showCopy: true,
-        };
-      }
-      if (printState.qualityFail) {
-        return {
-          kind: "quality",
-          title: "Print quality too low to bid.",
-          body:
-            (printState.qualityWarn || "Image too small or no linework detected.") +
-            " Upload a better scan or mark not readable.",
-          copy: PRINT_NOT_READABLE_MSG,
-          showCopy: true,
-        };
-      }
-      if (
-        printState.fileType === "application/pdf" &&
-        !intake.printLooksReadable &&
-        !formLooksReadable()
-      ) {
-        return {
-          kind: "pdf-confirm",
-          title: "Confirm the PDF looks readable.",
-          body: "PDF accepted — check the Looks readable box on intake, or mark not readable.",
-          copy: PRINT_NOT_READABLE_MSG,
-          showCopy: true,
-        };
+      if (!intake.liftRequired || intake.liftRequired === "unknown") {
+        items.push({
+          id: "lift",
+          label: "Lift not answered",
+          question:
+            "Will the crew need a lift to reach the devices, or will a ladder do?",
+        });
       }
     }
 
-    return null;
+    return items;
   }
 
   function fillForm(intake) {
@@ -802,27 +795,52 @@
     return h != null && h >= 12;
   }
 
-  function renderHardStop(stop, showOnly) {
+  function renderMissingItems(items) {
     const card = document.getElementById("hard-stop");
     const main = document.getElementById("results-main");
-    card.hidden = false;
-    document.getElementById("hard-stop-title").textContent = stop.title;
-    document.getElementById("hard-stop-body").textContent = stop.body;
+    const list = document.getElementById("missing-items");
     const copyWrap = document.getElementById("hard-stop-copy-wrap");
     const ta = document.getElementById("hard-stop-msg");
-    if (stop.showCopy && stop.copy) {
-      copyWrap.hidden = false;
-      ta.value = stop.copy;
-    } else {
-      copyWrap.hidden = true;
-      ta.value = stop.copy || "";
+    if (main) main.hidden = false;
+    if (!items || !items.length) {
+      if (card) card.hidden = true;
+      if (list) list.innerHTML = "";
+      if (ta) ta.value = "";
+      return;
     }
-    main.hidden = !!showOnly;
+    card.hidden = false;
+    document.getElementById("hard-stop-title").textContent =
+      "Incomplete — questions back to the rep";
+    document.getElementById("hard-stop-body").textContent =
+      "This job stays open. Panel path and takeoff stay available, marked incomplete until these answers are filled in on Intake.";
+    if (list) {
+      list.innerHTML = items
+        .map(function (item) {
+          return (
+            "<li><strong>" +
+            escapeHtml(item.label) +
+            '</strong><span class="missing-q">' +
+            escapeHtml(item.question) +
+            "</span></li>"
+          );
+        })
+        .join("");
+    }
+    if (copyWrap) copyWrap.hidden = false;
+    if (ta) {
+      ta.value = items
+        .map(function (item) {
+          return item.question;
+        })
+        .join("\n\n");
+    }
   }
 
-  function hideHardStop() {
-    document.getElementById("hard-stop").hidden = true;
-    document.getElementById("results-main").hidden = false;
+  function markIncomplete(on) {
+    const panelNote = document.getElementById("panel-incomplete");
+    const takeoffNote = document.getElementById("takeoff-incomplete");
+    if (panelNote) panelNote.hidden = !on;
+    if (takeoffNote) takeoffNote.hidden = !on;
   }
 
   function renderYellowFlag(text) {
@@ -1251,7 +1269,7 @@
         [
           "Occupant load",
           intake.occupantLoadUnknown
-            ? "Unknown (HARD STOP)"
+            ? "Unknown"
             : intake.occupantLoad != null
               ? String(intake.occupantLoad)
               : "—",
@@ -1312,27 +1330,22 @@
     });
     html += "</dl>";
 
-    if (state.hardStopKind) {
-      html +=
-        "<h4>Hard stop</h4><p>" +
-        escapeHtml(state.hardStopKind) +
-        " — commercial panel A/B/C blocked.</p>";
-    }
-
     if (state.yellowFlag) {
       html += "<h4>Hazard flag</h4><p>" + escapeHtml(state.yellowFlag) + "</p>";
     }
 
-    if (intake.prints === "none") {
+    if (state.missingItems && state.missingItems.length) {
+      html += "<h4>Incomplete — questions back to the rep</h4><ul>";
+      state.missingItems.forEach(function (item) {
+        html +=
+          "<li><strong>" +
+          escapeHtml(item.label) +
+          "</strong> — " +
+          escapeHtml(item.question) +
+          "</li>";
+      });
       html +=
-        "<h4>Hard-stop note</h4><p>Need floor plan / prints before markup or device counts you can bid. " +
-        escapeHtml(HARD_STOP_MSG) +
-        "</p>";
-    }
-
-    if (state.showHardStopOnly) {
-      body.innerHTML = html;
-      return;
+        "</ul><p>Panel path and takeoff are incomplete until these answers are filled in on Intake.</p>";
     }
 
     if (state.detectorStrategy) {
@@ -1377,7 +1390,7 @@
 
     html += "<h4>Flags</h4><ul>";
     html += "<li>confirm AHJ</li>";
-    if (intake.prints === "none") html += "<li>no prints — need drawings before bid markup</li>";
+    if (intake.prints === "none") html += "<li>no prints</li>";
     if (rec && rec.voiceLikely) html += "<li>voice likely</li>";
     if (rec && rec.highRise) html += "<li>high-rise</li>";
     if (rec && rec.rule === 3) html += "<li>don't sell 20P</li>";
@@ -1531,16 +1544,8 @@
     intake.printFileName = printState.fileName || intake.printFileName || "";
     intake.printLooksReadable = formLooksReadable() || !!printState.looksReadable;
 
-    const stop = commercialHardStop(intake);
-    if (stop) {
-      state.showHardStopOnly = true;
-      state.hardStopKind = stop.kind;
-      state.yellowFlag = pre1980YellowFlag(intake);
-      renderYellowFlag(state.yellowFlag);
-      renderHardStop(stop, true);
-      showScreen(2);
-      return;
-    }
+    const missing = listMissingItems(intake);
+    state.missingItems = missing;
 
     const showPanel = shouldShowPanelOptions(intake);
     let rec = null;
@@ -1566,21 +1571,8 @@
 
     state.yellowFlag = pre1980YellowFlag(intake);
     renderYellowFlag(state.yellowFlag);
-
-    if (intake.prints === "none" && intake.jobScale === "residential") {
-      renderHardStop(
-        {
-          kind: "res-no-prints",
-          title: "Need floor plan / prints before markup or device counts you can bid.",
-          body: "Ask the sales rep: bedrooms, stories, basement, existing smokes, interconnected?, hardwired or battery, AHJ.",
-          copy: HARD_STOP_MSG,
-          showCopy: true,
-        },
-        false
-      );
-    } else {
-      hideHardStop();
-    }
+    renderMissingItems(missing);
+    markIncomplete(missing.length > 0);
 
     renderFlags(state.rec || buildHeuristics(intake), intake);
 
@@ -1851,6 +1843,7 @@
     updateTakeoffFlags();
     updateTakeoffTotals();
     renderCatalogList("");
+    markIncomplete(!!(state.missingItems && state.missingItems.length));
   }
 
   function updateTakeoffTotals() {
@@ -2285,7 +2278,6 @@
   const btnTakeoff = document.getElementById("btn-takeoff");
   if (btnTakeoff) {
     btnTakeoff.addEventListener("click", () => {
-      if (state.showHardStopOnly) return;
       initTakeoffFromEstimates();
       renderTakeoff();
       showScreen("takeoff");
@@ -2346,14 +2338,11 @@
 
   window.PanelPath = {
     DISCLAIMER: DISCLAIMER,
-    HARD_STOP_MSG: HARD_STOP_MSG,
-    OCCUPANT_LOAD_STOP: OCCUPANT_LOAD_STOP,
-    DEVICES_PRINT_STOP: DEVICES_PRINT_STOP,
     PRINT_NOT_READABLE_MSG: PRINT_NOT_READABLE_MSG,
     recommend: recommend,
     estimateDevices: estimateDevices,
     buildHeuristics: buildHeuristics,
     detectorStrategy: detectorStrategy,
-    commercialHardStop: commercialHardStop,
+    listMissingItems: listMissingItems,
   };
 })();
