@@ -646,6 +646,31 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
   cursor: text;
 }
 
+.missing-items {
+  margin: 0 0 0.85rem;
+  padding-left: 1.15rem;
+}
+
+.missing-items li {
+  margin: 0 0 0.65rem;
+}
+
+.missing-items .missing-q {
+  display: block;
+  margin-top: 0.15rem;
+  font-weight: 400;
+}
+
+.incomplete-note {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--amber);
+  background: var(--amber-bg);
+  color: var(--amber);
+  font-weight: 700;
+}
+
 /* ---- Spec vs code warning + two columns ---- */
 .spec-code-warn {
   margin: 0 0 1rem;
