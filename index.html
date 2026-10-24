@@ -59,7 +59,7 @@
                 <input type="checkbox" name="devicesOnPrint" />
                 <span>Existing devices are marked on the print</span>
               </label>
-              <p class="hint">Required for add-on, takeover, or replacement.</p>
+              <p class="hint">Add-on, takeover, or replacement still need devices marked. If this stays unchecked, Results asks — it does not block the panel path.</p>
             </div>
           </fieldset>
 
@@ -204,7 +204,7 @@
                   <span>Unknown</span>
                 </label>
               </div>
-              <p class="hint">Commercial: unknown load blocks panel A/B/C — get it from owner, architect, or posted load.</p>
+              <p class="hint">If the load is unknown, Results asks the rep for it. The panel path stays open and is marked incomplete.</p>
             </fieldset>
 
             <fieldset>
@@ -276,7 +276,7 @@
             <!-- Prints upload + quality + device checklist (commercial with drawings) -->
             <div id="prints-upload-block" class="prints-block" hidden>
               <h3 class="branch-title">Prints upload</h3>
-              <p class="hint">High-quality scan or vector PDF. Phone photo OK if straight-on and well-lit. File stays in this session only (intake fields persist; file may not survive refresh).</p>
+              <p class="hint">High-quality scan or vector PDF. Phone photo OK if straight-on and well-lit. File stays in this session only (intake fields persist; the file may not survive refresh). Takeoff can place devices on this file.</p>
               <label class="field">
                 <span>Drawing file <em>(PDF or image)</em></span>
                 <input type="file" name="printFile" id="printFile" accept="application/pdf,image/*" />
@@ -296,7 +296,7 @@
               <div class="actions print-actions">
                 <button type="button" class="btn btn-secondary" id="btn-print-not-readable">This print is not readable</button>
               </div>
-              <p id="print-not-readable-note" class="hint alert-hint" hidden>Marked not readable — upload a better file or results stay blocked.</p>
+              <p id="print-not-readable-note" class="hint alert-hint" hidden>Marked not readable — Results will ask for a better file. The panel path stays open, marked incomplete.</p>
 
               <h3 class="branch-title">Device checklist <em>(tick off the print)</em></h3>
               <p class="hint">We do not claim auto-extract from the drawing. Counts feed the estimate qty.</p>
@@ -383,16 +383,17 @@
         Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.
       </div>
 
-      <!-- Amber hard-stop / yellow flag cards -->
+      <!-- Open questions when the job is incomplete; yellow flag stays separate -->
       <div id="hard-stop" class="hard-stop-card" hidden>
-        <h3 id="hard-stop-title">Need floor plan / prints before markup or device counts you can bid.</h3>
-        <p id="hard-stop-body">Ask the sales rep: bedrooms, stories, basement, existing smokes, interconnected?, hardwired or battery, AHJ.</p>
+        <h3 id="hard-stop-title">Incomplete — questions back to the rep</h3>
+        <p id="hard-stop-body">This job stays open. Panel path and takeoff stay available, marked incomplete until these answers are filled in on Intake.</p>
+        <ul id="missing-items" class="missing-items"></ul>
         <label class="field" id="hard-stop-copy-wrap">
-          <span>Copy-paste for the customer / GC</span>
-          <textarea id="hard-stop-msg" readonly rows="4"></textarea>
+          <span>Questions to send the rep</span>
+          <textarea id="hard-stop-msg" readonly rows="6"></textarea>
         </label>
         <div class="actions">
-          <button type="button" class="btn btn-secondary" id="btn-copy-hardstop">Copy message</button>
+          <button type="button" class="btn btn-secondary" id="btn-copy-hardstop">Copy questions</button>
           <button type="button" class="btn btn-ghost" id="btn-hardstop-back">← Back to Intake</button>
         </div>
         <p id="copy-toast" class="hint" hidden>Copied.</p>
@@ -415,6 +416,7 @@
 
         <div id="panel-options-block">
           <h3 class="subhead" id="panel-options-title">Panel options</h3>
+          <p id="panel-incomplete" class="incomplete-note" hidden>Incomplete — waiting on the rep's answers before this panel path is finished.</p>
           <div id="options" class="options"></div>
         </div>
 
@@ -533,8 +535,38 @@
       <div class="disclaimer-banner" role="note">
         Decision support only. Confirm with AHJ and current Michigan Building Code / NFPA 72. Manufacturer calculators win on battery, voltage drop, and storage.
       </div>
+      <p id="takeoff-incomplete" class="incomplete-note" hidden>Incomplete — waiting on the rep's answers before this takeoff is finished.</p>
       <p class="hint">Starter catalog only — not a full ADI scrape. Edit part numbers. Do not invent SKUs we don’t know. Unit costs stay empty.</p>
       <p id="takeoff-keypad-guidance" class="print-quality-msg warn-only" hidden></p>
+
+      <section id="print-markup" class="print-markup" aria-labelledby="markup-title">
+        <h3 id="markup-title" class="subhead">Print markup</h3>
+        <p class="hint">Import a PDF or an image, or use the file uploaded on Intake. Pick a starter-catalog device and click the page to place it. Click a symbol to select it, then Remove. Qty on the matching device line follows the symbols on every page. The intake quality check and the manual checklist stay as they are. Auto-read stays off. This does not calculate wire feet or fill prices.</p>
+        <p id="markup-source" class="hint">No print yet. Import a PDF or image here, or upload one on Intake.</p>
+        <label class="field">
+          <span>Import prints <em>(PDF or image)</em></span>
+          <input type="file" id="markup-file" accept="application/pdf,image/*" />
+        </label>
+        <p id="markup-quality" class="print-quality-msg" hidden></p>
+        <p id="markup-status" class="hint" role="status" aria-live="polite" hidden></p>
+        <div id="markup-tools" hidden>
+          <p class="hint" id="markup-pick-label">Device to place</p>
+          <div id="markup-device-picker" class="markup-picker" role="group" aria-labelledby="markup-pick-label"></div>
+          <div class="markup-nav">
+            <button type="button" class="btn btn-secondary" id="markup-prev">← Page</button>
+            <span id="markup-page-label">Page 1 of 1</span>
+            <button type="button" class="btn btn-secondary" id="markup-next">Page →</button>
+            <button type="button" class="btn btn-ghost" id="markup-remove">Remove selected</button>
+            <button type="button" class="btn btn-primary" id="markup-export">Download marked-up PDF</button>
+          </div>
+          <div class="markup-stage">
+            <canvas id="markup-canvas" class="markup-canvas" aria-label="Print page. Click to place the selected device. Click a symbol to select it."></canvas>
+          </div>
+          <div id="markup-page-list" class="markup-page-list"></div>
+          <h4 class="markup-legend-title">Legend</h4>
+          <div id="markup-legend"></div>
+        </div>
+      </section>
 
       <label class="field inline-markup">
         <span>Markup % (takeoff extended)</span>
@@ -552,6 +584,7 @@
       </div>
 
       <h3 class="subhead">Device lines</h3>
+      <p class="hint">Lines marked “from print” follow symbols on the drawing. Other lines stay manual. Unit costs stay empty.</p>
       <div class="table-scroll">
         <table class="takeoff-table" id="takeoff-device-table">
           <thead>
@@ -574,7 +607,7 @@
       </div>
 
       <h3 class="subhead" id="takeoff-wire-heading">Wire lines</h3>
-      <p class="hint" id="takeoff-wire-note">Feet come from the markup. Measure in Bluebeam or on the print, then enter here.</p>
+      <p class="hint" id="takeoff-wire-note">Wire feet are typed here. Measure on the print (Bluebeam or a scale). Symbols on the print do not calculate feet.</p>
       <p id="takeoff-wire-flag" class="yellow-flag-card" hidden></p>
       <div class="actions">
         <button type="button" class="btn btn-secondary" id="btn-add-wire-row">+ Wire row</button>
@@ -637,6 +670,9 @@
     </section>
   </main>
 
+  <!-- Print markup: pdf.js renders PDF pages; pdf-lib builds the export. Versions are pinned in README. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
