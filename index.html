@@ -276,7 +276,7 @@
             <!-- Prints upload + quality + device checklist (commercial with drawings) -->
             <div id="prints-upload-block" class="prints-block" hidden>
               <h3 class="branch-title">Prints upload</h3>
-              <p class="hint">High-quality scan or vector PDF. Phone photo OK if straight-on and well-lit. File stays in this session only (intake fields persist; file may not survive refresh).</p>
+              <p class="hint">High-quality scan or vector PDF. Phone photo OK if straight-on and well-lit. File stays in this session only (intake fields persist; the file may not survive refresh). Takeoff can place devices on this file.</p>
               <label class="field">
                 <span>Drawing file <em>(PDF or image)</em></span>
                 <input type="file" name="printFile" id="printFile" accept="application/pdf,image/*" />
@@ -539,6 +539,35 @@
       <p class="hint">Starter catalog only — not a full ADI scrape. Edit part numbers. Do not invent SKUs we don’t know. Unit costs stay empty.</p>
       <p id="takeoff-keypad-guidance" class="print-quality-msg warn-only" hidden></p>
 
+      <section id="print-markup" class="print-markup" aria-labelledby="markup-title">
+        <h3 id="markup-title" class="subhead">Print markup</h3>
+        <p class="hint">Import a PDF or an image, or use the file uploaded on Intake. Pick a starter-catalog device and click the page to place it. Click a symbol to select it, then Remove. Qty on the matching device line follows the symbols on every page. The intake quality check and the manual checklist stay as they are. Auto-read stays off. This does not calculate wire feet or fill prices.</p>
+        <p id="markup-source" class="hint">No print yet. Import a PDF or image here, or upload one on Intake.</p>
+        <label class="field">
+          <span>Import prints <em>(PDF or image)</em></span>
+          <input type="file" id="markup-file" accept="application/pdf,image/*" />
+        </label>
+        <p id="markup-quality" class="print-quality-msg" hidden></p>
+        <p id="markup-status" class="hint" role="status" aria-live="polite" hidden></p>
+        <div id="markup-tools" hidden>
+          <p class="hint" id="markup-pick-label">Device to place</p>
+          <div id="markup-device-picker" class="markup-picker" role="group" aria-labelledby="markup-pick-label"></div>
+          <div class="markup-nav">
+            <button type="button" class="btn btn-secondary" id="markup-prev">← Page</button>
+            <span id="markup-page-label">Page 1 of 1</span>
+            <button type="button" class="btn btn-secondary" id="markup-next">Page →</button>
+            <button type="button" class="btn btn-ghost" id="markup-remove">Remove selected</button>
+            <button type="button" class="btn btn-primary" id="markup-export">Download marked-up PDF</button>
+          </div>
+          <div class="markup-stage">
+            <canvas id="markup-canvas" class="markup-canvas" aria-label="Print page. Click to place the selected device. Click a symbol to select it."></canvas>
+          </div>
+          <div id="markup-page-list" class="markup-page-list"></div>
+          <h4 class="markup-legend-title">Legend</h4>
+          <div id="markup-legend"></div>
+        </div>
+      </section>
+
       <label class="field inline-markup">
         <span>Markup % (takeoff extended)</span>
         <input type="number" id="takeoff-markup" min="0" step="1" />
@@ -555,6 +584,7 @@
       </div>
 
       <h3 class="subhead">Device lines</h3>
+      <p class="hint">Lines marked “from print” follow symbols on the drawing. Other lines stay manual. Unit costs stay empty.</p>
       <div class="table-scroll">
         <table class="takeoff-table" id="takeoff-device-table">
           <thead>
@@ -577,7 +607,7 @@
       </div>
 
       <h3 class="subhead" id="takeoff-wire-heading">Wire lines</h3>
-      <p class="hint" id="takeoff-wire-note">Feet come from the markup. Measure in Bluebeam or on the print, then enter here.</p>
+      <p class="hint" id="takeoff-wire-note">Wire feet are typed here. Measure on the print (Bluebeam or a scale). Symbols on the print do not calculate feet.</p>
       <p id="takeoff-wire-flag" class="yellow-flag-card" hidden></p>
       <div class="actions">
         <button type="button" class="btn btn-secondary" id="btn-add-wire-row">+ Wire row</button>
@@ -640,6 +670,9 @@
     </section>
   </main>
 
+  <!-- Print markup: pdf.js renders PDF pages; pdf-lib builds the export. Versions are pinned in README. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

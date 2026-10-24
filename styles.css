@@ -576,6 +576,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
   .screen { display: block !important; }
   #screen-1, #screen-2 { display: none !important; }
   #screen-3 { display: block !important; }
+  #print-markup { display: none !important; }
   .disclaimer-banner,
   .summary-sheet,
   .option-card,
@@ -1040,4 +1041,152 @@ main {
 
 #screen-takeoff[hidden] {
   display: none !important;
+}
+
+main:has(#screen-takeoff:not([hidden])) {
+  max-width: 1100px;
+}
+
+/* ---- Print markup (lives on Takeoff) ---- */
+.print-markup {
+  margin: 0.5rem 0 1.25rem;
+  padding: 0.85rem 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+}
+
+#markup-tools[hidden] {
+  display: none !important;
+}
+
+.markup-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.markup-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--chip);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-height: var(--tap);
+  padding: 0.3rem 0.65rem 0.3rem 0.35rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.markup-pick.is-active {
+  border-color: var(--amber);
+  box-shadow: inset 0 0 0 1px var(--amber);
+}
+
+.markup-swatch {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.markup-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  margin: 0 0 0.65rem;
+}
+
+.markup-nav .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.markup-stage {
+  background: #111;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem;
+  overflow: auto;
+  max-height: 70vh;
+}
+
+.markup-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  cursor: crosshair;
+  background: #fff;
+  border-radius: 4px;
+  touch-action: manipulation;
+}
+
+.markup-page-list {
+  margin: 0.65rem 0 0.35rem;
+}
+
+.markup-placed {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.markup-placed.is-selected .btn {
+  color: var(--amber);
+}
+
+.markup-legend-title {
+  margin: 0.85rem 0 0.35rem;
+  font-size: 0.95rem;
+  color: var(--amber);
+}
+
+.markup-legend {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.markup-legend th,
+.markup-legend td {
+  text-align: left;
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.markup-legend th {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.from-print {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.takeoff-table input.qty-locked {
+  border-color: var(--amber-dim);
 }

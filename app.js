@@ -18,6 +18,10 @@
  *   - lift not answered (commercial, or residential stories >= 2)
  *
  * Ceiling + lift: asked on commercial; residential when stories >= 2.
+ *
+ * Takeoff print markup: import a PDF or image, place starter-catalog
+ * symbols, and export a marked-up PDF. Counts follow the symbols.
+ * Auto-read stays off. The manual checklist is unchanged.
  */
 
 (function () {
@@ -63,6 +67,7 @@
     pdfAcceptedNote: false,
     notReadable: false,
     looksReadable: false,
+    file: null,
   };
 
   let state = {
@@ -1633,6 +1638,38 @@
     { id: "communicator", desc: "Communicator (generic)", mfr: "", part: "", supplier: "ADI" },
   ];
 
+  const MARKUP_STYLE = {
+    "vista-20p": { abbr: "VP", color: "#f5c518" },
+    "6160": { abbr: "KP", color: "#6bcf7f" },
+    "6160rf": { abbr: "RF", color: "#3dba8b" },
+    "6160v": { abbr: "KV", color: "#8fd9a0" },
+    smoke: { abbr: "S", color: "#5dade2" },
+    heat: { abbr: "H", color: "#e67e22" },
+    pull: { abbr: "PL", color: "#e74c3c" },
+    horn: { abbr: "HN", color: "#9b59b6" },
+    "speaker-strobe": { abbr: "SS", color: "#1abc9c" },
+    facp: { abbr: "FC", color: "#f1c40f" },
+    communicator: { abbr: "CM", color: "#f39c12" },
+  };
+
+  const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const printMarkup = {
+    loadedKey: "",
+    fileName: "",
+    kind: "",
+    bytes: null,
+    imageType: "",
+    pdfDoc: null,
+    pageImage: null,
+    pageCount: 0,
+    pageIndex: 0,
+    markups: [],
+    selectedId: null,
+    activeCatalogId: "smoke",
+    renderToken: 0,
+  };
+
   function persistTakeoff() {
     try { sessionStorage.setItem(TAKEOFF_KEY, JSON.stringify(state.takeoff)); } catch (_) {}
   }
@@ -1738,6 +1775,7 @@
         supplier: tr.querySelector('[data-f="supplier"]').value || "ADI",
         unitCost: tr.querySelector('[data-f="unitCost"]').value,
         catalogId: tr.getAttribute("data-cat") || "",
+        fromMarkup: tr.getAttribute("data-from-markup") === "1",
       });
     });
     const wire = [];
@@ -1779,7 +1817,7 @@
     if (wireNote) {
       wireNote.textContent = c2t
         ? "Check-and-test: wire lines optional — electrician furnish. Our labor stays program/test on Results."
-        : "Feet come from the markup. Measure in Bluebeam or on the print, then enter here. Do NOT auto-calculate from upload.";
+        : "Wire feet are typed here. Measure on the print (Bluebeam or a scale). Symbols on the print do not calculate feet.";
     }
     const wireLabel = document.getElementById("takeoff-wire-heading");
     if (wireLabel) {
@@ -1802,17 +1840,23 @@
       const tr = document.createElement("tr");
       tr.setAttribute("data-idx", String(idx));
       if (row.catalogId) tr.setAttribute("data-cat", row.catalogId);
+      if (row.fromMarkup) tr.setAttribute("data-from-markup", "1");
       const ext = extWithMarkup(row.qty, row.unitCost, markup);
       const unitVal = row.unitCost === "" || row.unitCost == null ? "" : row.unitCost;
+      const qtyAttrs = row.fromMarkup
+        ? " readonly class=\"qty-locked\" title=\"Qty follows symbols placed on the print\""
+        : "";
+      const delTitle = row.fromMarkup ? " title=\"Remove this line and its symbols\"" : "";
       tr.innerHTML =
-        "<td><input type=\"number\" min=\"0\" step=\"1\" data-f=\"qty\" value=\"" + escapeAttr(row.qty) + "\" /></td>" +
+        "<td><input type=\"number\" min=\"0\" step=\"1\" data-f=\"qty\" value=\"" + escapeAttr(row.qty) + "\"" + qtyAttrs + " />" +
+        (row.fromMarkup ? "<span class=\"from-print\">from print</span>" : "") + "</td>" +
         "<td><input type=\"text\" data-f=\"description\" value=\"" + escapeAttr(row.description) + "\" /></td>" +
         "<td><input type=\"text\" data-f=\"manufacturer\" value=\"" + escapeAttr(row.manufacturer) + "\" /></td>" +
         "<td><input type=\"text\" data-f=\"partNumber\" value=\"" + escapeAttr(row.partNumber) + "\" placeholder=\"rep edits\" /></td>" +
         "<td><select data-f=\"supplier\">" + optionList(SUPPLIERS, row.supplier || "ADI") + "</select></td>" +
         "<td><input type=\"number\" min=\"0\" step=\"0.01\" data-f=\"unitCost\" placeholder=\"—\" value=\"" + escapeAttr(unitVal) + "\" /></td>" +
         "<td class=\"ext\" data-ext-dev=\"" + idx + "\">" + formatMoney(ext) + "</td>" +
-        "<td><button type=\"button\" class=\"btn btn-ghost btn-tiny\" data-del-dev=\"" + idx + "\">X</button></td>";
+        "<td><button type=\"button\" class=\"btn btn-ghost btn-tiny\" data-del-dev=\"" + idx + "\"" + delTitle + ">X</button></td>";
       tbody.appendChild(tr);
     });
 
@@ -1949,7 +1993,22 @@
     const delDev = e.target.closest("[data-del-dev]");
     if (delDev) {
       syncTakeoffFromDom();
-      state.takeoff.devices.splice(Number(delDev.getAttribute("data-del-dev")), 1);
+      const devIdx = Number(delDev.getAttribute("data-del-dev"));
+      const devRow = state.takeoff.devices[devIdx];
+      if (devRow && devRow.fromMarkup && devRow.catalogId) {
+        printMarkup.markups = printMarkup.markups.filter(function (m) {
+          return m.catalogId !== devRow.catalogId;
+        });
+        if (printMarkup.selectedId && !printMarkup.markups.some(function (m) { return m.id === printMarkup.selectedId; })) {
+          printMarkup.selectedId = null;
+        }
+        state.takeoff.devices.splice(devIdx, 1);
+        persistTakeoff();
+        renderTakeoff();
+        refreshMarkupChrome();
+        return;
+      }
+      state.takeoff.devices.splice(devIdx, 1);
       persistTakeoff();
       renderTakeoff();
       return;
@@ -2020,6 +2079,889 @@
     return html;
   }
 
+  /* ---------- PRINT MARKUP (on Takeoff) ---------- */
+
+  function markupStyle(id) {
+    return MARKUP_STYLE[id] || { abbr: "?", color: "#f5c518" };
+  }
+
+  function catalogById(id) {
+    for (let i = 0; i < STARTER_CATALOG.length; i++) {
+      if (STARTER_CATALOG[i].id === id) return STARTER_CATALOG[i];
+    }
+    return null;
+  }
+
+  function textOn(hex) {
+    const n = parseInt(String(hex).replace("#", ""), 16);
+    if (!Number.isFinite(n)) return "#1a1a1e";
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    return y > 160 ? "#1a1a1e" : "#ffffff";
+  }
+
+  function fileKey(file) {
+    if (!file) return "";
+    return [file.name, file.size, file.lastModified, file.type].join(":");
+  }
+
+  function isPdfFile(file) {
+    if (!file) return false;
+    return file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+  }
+
+  function configurePdfJs() {
+    if (!window.pdfjsLib) return false;
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+    return true;
+  }
+
+  function setMarkupStatus(text, isError) {
+    const el = document.getElementById("markup-status");
+    if (!el) return;
+    if (!text) {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("alert-hint");
+      return;
+    }
+    el.hidden = false;
+    el.textContent = text;
+    el.classList.toggle("alert-hint", !!isError);
+  }
+
+  function setMarkupSource(text) {
+    const el = document.getElementById("markup-source");
+    if (el) el.textContent = text;
+  }
+
+  function markupSourceLine() {
+    const n = printMarkup.pageCount || 1;
+    return "Showing " + (printMarkup.fileName || "print") + " — " + n +
+      (n === 1 ? " page." : " pages.") +
+      " Pick a device and click the page. Qty on the matching Takeoff line follows the symbols.";
+  }
+
+  function mirrorMarkupQuality() {
+    const el = document.getElementById("markup-quality");
+    const src = document.getElementById("print-quality-msg");
+    if (!el) return;
+    if (!src || src.hidden || !src.textContent) {
+      el.hidden = true;
+      el.textContent = "";
+      return;
+    }
+    if (printState.looksReadable && !printState.qualityFail && !printState.notReadable) {
+      el.hidden = true;
+      el.textContent = "";
+      return;
+    }
+    el.hidden = false;
+    el.textContent = src.textContent;
+    el.classList.toggle("warn-only", src.classList.contains("warn-only"));
+  }
+
+  function clamp01(n) {
+    return Math.min(1, Math.max(0, n));
+  }
+
+  function symbolRadius(canvas) {
+    return Math.max(16, Math.min(34, canvas.width * 0.02));
+  }
+
+  function markupCountByCatalog() {
+    const counts = {};
+    printMarkup.markups.forEach(function (m) {
+      counts[m.catalogId] = (counts[m.catalogId] || 0) + 1;
+    });
+    return counts;
+  }
+
+  function markupCountsOnPage(pageIndex) {
+    const counts = {};
+    printMarkup.markups.forEach(function (m) {
+      if (m.page !== pageIndex) return;
+      counts[m.catalogId] = (counts[m.catalogId] || 0) + 1;
+    });
+    return counts;
+  }
+
+  function legendLines(counts) {
+    const lines = [];
+    const seen = {};
+    STARTER_CATALOG.forEach(function (c) {
+      if (!counts[c.id]) return;
+      seen[c.id] = true;
+      const style = markupStyle(c.id);
+      lines.push({
+        id: c.id,
+        abbr: style.abbr,
+        color: style.color,
+        label: c.desc,
+        count: counts[c.id],
+      });
+    });
+    Object.keys(counts).forEach(function (id) {
+      if (seen[id] || !counts[id]) return;
+      const style = markupStyle(id);
+      lines.push({
+        id: id,
+        abbr: style.abbr,
+        color: style.color,
+        label: id,
+        count: counts[id],
+      });
+    });
+    return lines;
+  }
+
+  function newMarkupId() {
+    return "mk-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function drawSymbol(ctx, m, selected, r) {
+    const style = markupStyle(m.catalogId);
+    const x = m.x * ctx.canvas.width;
+    const y = m.y * ctx.canvas.height;
+    ctx.beginPath();
+    ctx.arc(x, y, r + (selected ? 5 : 2), 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = style.color;
+    ctx.fill();
+    ctx.lineWidth = selected ? 4 : 2;
+    ctx.strokeStyle = selected ? "#111111" : "rgba(0,0,0,0.7)";
+    ctx.stroke();
+    const abbr = style.abbr;
+    ctx.fillStyle = textOn(style.color);
+    ctx.font = "700 " + Math.round(r * (abbr.length > 1 ? 0.56 : 0.72)) + "px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(abbr, x, y + 0.5);
+  }
+
+  function redrawPrintMarkup() {
+    const view = document.getElementById("markup-canvas");
+    const src = printMarkup.pageImage;
+    if (!view || !src) return;
+    view.width = src.width;
+    view.height = src.height;
+    const ctx = view.getContext("2d");
+    ctx.drawImage(src, 0, 0);
+    const r = symbolRadius(view);
+    printMarkup.markups.forEach(function (m) {
+      if (m.page !== printMarkup.pageIndex) return;
+      drawSymbol(ctx, m, m.id === printMarkup.selectedId, r);
+    });
+  }
+
+  function updateMarkupNav() {
+    const label = document.getElementById("markup-page-label");
+    const prev = document.getElementById("markup-prev");
+    const next = document.getElementById("markup-next");
+    const n = printMarkup.pageCount || 1;
+    const i = printMarkup.pageIndex || 0;
+    if (label) label.textContent = "Page " + (i + 1) + " of " + n;
+    if (prev) prev.disabled = i <= 0;
+    if (next) next.disabled = i >= n - 1;
+  }
+
+  function renderMarkupPicker() {
+    const box = document.getElementById("markup-device-picker");
+    if (!box) return;
+    const counts = markupCountByCatalog();
+    box.innerHTML = STARTER_CATALOG.map(function (c) {
+      const style = markupStyle(c.id);
+      const n = counts[c.id] || 0;
+      const active = c.id === printMarkup.activeCatalogId;
+      return "<button type=\"button\" class=\"markup-pick" + (active ? " is-active" : "") +
+        "\" data-markup-cat=\"" + escapeAttr(c.id) + "\" aria-pressed=\"" + (active ? "true" : "false") + "\">" +
+        "<span class=\"markup-swatch\" style=\"background:" + style.color + ";color:" + textOn(style.color) + "\">" +
+        escapeHtml(style.abbr) + "</span><span>" + escapeHtml(c.desc) +
+        (n ? " (" + n + ")" : "") + "</span></button>";
+    }).join("");
+  }
+
+  function renderMarkupLegend() {
+    const box = document.getElementById("markup-legend");
+    if (!box) return;
+    const pageCounts = markupCountsOnPage(printMarkup.pageIndex);
+    const all = markupCountByCatalog();
+    const lines = legendLines(all);
+    if (!lines.length) {
+      box.innerHTML = "<p class=\"hint\">No symbols yet. The legend fills in as you place devices.</p>";
+      return;
+    }
+    let html = "<table class=\"markup-legend\"><thead><tr><th>Symbol</th><th>Device</th><th>This page</th><th>All pages</th></tr></thead><tbody>";
+    lines.forEach(function (line) {
+      html += "<tr><td><span class=\"markup-swatch\" style=\"background:" + line.color + ";color:" + textOn(line.color) + "\">" +
+        escapeHtml(line.abbr) + "</span></td><td>" + escapeHtml(line.label) + "</td><td>" +
+        (pageCounts[line.id] || 0) + "</td><td>" + line.count + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    box.innerHTML = html;
+  }
+
+  function renderMarkupPlacedList() {
+    const box = document.getElementById("markup-page-list");
+    if (!box) return;
+    const list = printMarkup.markups.filter(function (m) { return m.page === printMarkup.pageIndex; });
+    if (!list.length) {
+      box.innerHTML = "<p class=\"hint\">Nothing placed on this page.</p>";
+      return;
+    }
+    box.innerHTML = list.map(function (m) {
+      const cat = catalogById(m.catalogId);
+      const style = markupStyle(m.catalogId);
+      const sel = m.id === printMarkup.selectedId ? " is-selected" : "";
+      return "<div class=\"markup-placed" + sel + "\">" +
+        "<button type=\"button\" class=\"btn btn-ghost btn-tiny\" data-markup-select=\"" + escapeAttr(m.id) + "\">" +
+        escapeHtml(style.abbr + "  " + (cat ? cat.desc : m.catalogId)) + "</button>" +
+        "<button type=\"button\" class=\"btn btn-ghost btn-tiny\" data-markup-remove=\"" + escapeAttr(m.id) + "\">Remove</button></div>";
+    }).join("");
+  }
+
+  function refreshMarkupChrome() {
+    if (!printMarkup.pageImage) return;
+    redrawPrintMarkup();
+    updateMarkupNav();
+    renderMarkupPicker();
+    renderMarkupLegend();
+    renderMarkupPlacedList();
+  }
+
+  function dropFromMarkupRows() {
+    syncTakeoffFromDom();
+    const devices = state.takeoff.devices || [];
+    const next = devices.filter(function (row) { return !row.fromMarkup; });
+    if (next.length === devices.length) return;
+    state.takeoff.devices = next;
+    persistTakeoff();
+    renderTakeoff();
+  }
+
+  function applyMarkupCounts() {
+    if (!state.takeoff) state.takeoff = { devices: [], wire: [], initialized: true };
+    if (!state.takeoff.devices) state.takeoff.devices = [];
+    syncTakeoffFromDom();
+    const counts = markupCountByCatalog();
+    const used = {};
+    const next = [];
+    (state.takeoff.devices || []).forEach(function (row) {
+      if (row.fromMarkup) {
+        const n = row.catalogId ? (counts[row.catalogId] || 0) : 0;
+        if (!n || used[row.catalogId]) return;
+        row.qty = n;
+        used[row.catalogId] = true;
+        next.push(row);
+        return;
+      }
+      if (row.catalogId && counts[row.catalogId] && !used[row.catalogId]) {
+        row.qty = counts[row.catalogId];
+        row.fromMarkup = true;
+        used[row.catalogId] = true;
+      }
+      next.push(row);
+    });
+    Object.keys(counts).forEach(function (id) {
+      if (used[id]) return;
+      const cat = catalogById(id);
+      if (!cat) return;
+      next.push({
+        qty: counts[id],
+        description: cat.desc,
+        manufacturer: cat.mfr,
+        partNumber: cat.part,
+        supplier: cat.supplier,
+        unitCost: "",
+        catalogId: cat.id,
+        fromMarkup: true,
+      });
+    });
+    state.takeoff.devices = next;
+    state.takeoff.initialized = true;
+    persistTakeoff();
+    renderTakeoff();
+    refreshMarkupChrome();
+  }
+
+  function removeMarkupById(id) {
+    const before = printMarkup.markups.length;
+    printMarkup.markups = printMarkup.markups.filter(function (m) { return m.id !== id; });
+    if (printMarkup.selectedId === id) printMarkup.selectedId = null;
+    if (printMarkup.markups.length === before) return;
+    applyMarkupCounts();
+    setMarkupStatus("");
+  }
+
+  function placeMarkup(norm) {
+    const id = newMarkupId();
+    printMarkup.markups.push({
+      id: id,
+      page: printMarkup.pageIndex,
+      x: clamp01(norm.x),
+      y: clamp01(norm.y),
+      catalogId: printMarkup.activeCatalogId || "smoke",
+    });
+    printMarkup.selectedId = id;
+    applyMarkupCounts();
+    setMarkupStatus("");
+  }
+
+  function hitMarkup(norm, pageIndex) {
+    const canvas = document.getElementById("markup-canvas");
+    if (!canvas || !canvas.width) return null;
+    const r = symbolRadius(canvas) * 1.35;
+    const list = printMarkup.markups.filter(function (m) { return m.page === pageIndex; });
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i];
+      const dx = (m.x - norm.x) * canvas.width;
+      const dy = (m.y - norm.y) * canvas.height;
+      if (dx * dx + dy * dy <= r * r) return m;
+    }
+    return null;
+  }
+
+  function canvasNorm(e) {
+    const canvas = e.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top) / rect.height,
+    };
+  }
+
+  async function renderPdfPageCanvas(pdfDoc, index) {
+    const page = await pdfDoc.getPage(index + 1);
+    const base = page.getViewport({ scale: 1 });
+    const long = Math.max(base.width, base.height) || 1;
+    const scale = Math.min(2.5, 2000 / long);
+    const viewport = page.getViewport({ scale: scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+    return { canvas: canvas, width: base.width, height: base.height };
+  }
+
+  function loadImageElement(file) {
+    return new Promise(function (resolve, reject) {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        resolve(img);
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        reject(new Error("Could not read that image."));
+      };
+      img.src = url;
+    });
+  }
+
+  function canvasFromImage(img) {
+    const w = img.naturalWidth || img.width || 1;
+    const h = img.naturalHeight || img.height || 1;
+    const long = Math.max(w, h);
+    const scale = long > 1800 ? 1800 / long : 1;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  async function loadPrintForMarkup(file) {
+    const key = fileKey(file);
+    const pdf = isPdfFile(file);
+    if (pdf && !configurePdfJs()) {
+      throw new Error("PDF markup needs pdf.js from the CDN. Check the network and reload.");
+    }
+    setMarkupStatus("Opening " + file.name + "…");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let pdfDoc = null;
+    let pageImage = null;
+    let kind = "image";
+    let pageCount = 1;
+    let imageType = file.type || "";
+
+    if (pdf) {
+      let task;
+      try {
+        task = window.pdfjsLib.getDocument({ data: bytes.slice(0) });
+        pdfDoc = await task.promise;
+      } catch (err) {
+        throw new Error("Could not open that PDF. " + (err && err.message ? err.message : "Check the file and the network."));
+      }
+      pageCount = pdfDoc.numPages || 0;
+      if (!pageCount) {
+        try { await pdfDoc.destroy(); } catch (_) {}
+        throw new Error("That PDF has no pages.");
+      }
+      const rendered = await renderPdfPageCanvas(pdfDoc, 0);
+      pageImage = rendered.canvas;
+      kind = "pdf";
+      imageType = "application/pdf";
+    } else {
+      const img = await loadImageElement(file);
+      sampleImageQuality(img);
+      pageImage = canvasFromImage(img);
+      kind = "image";
+      pageCount = 1;
+    }
+
+    const switching = printMarkup.loadedKey && printMarkup.loadedKey !== key;
+    if (switching) {
+      printMarkup.markups = [];
+      printMarkup.selectedId = null;
+      dropFromMarkupRows();
+    }
+    if (printMarkup.pdfDoc && printMarkup.pdfDoc !== pdfDoc) {
+      try { await printMarkup.pdfDoc.destroy(); } catch (_) {}
+    }
+    printMarkup.loadedKey = key;
+    printMarkup.fileName = file.name;
+    printMarkup.bytes = bytes;
+    printMarkup.imageType = imageType;
+    printMarkup.kind = kind;
+    printMarkup.pdfDoc = pdfDoc;
+    printMarkup.pageCount = pageCount;
+    printMarkup.pageIndex = 0;
+    printMarkup.pageImage = pageImage;
+    const tools = document.getElementById("markup-tools");
+    if (tools) tools.hidden = false;
+    setMarkupSource(markupSourceLine());
+    mirrorMarkupQuality();
+    refreshMarkupChrome();
+    setMarkupStatus("");
+  }
+
+  function maybeLoadIntakePrint() {
+    const file = printState.file;
+    if (!file) {
+      if (!printMarkup.pageImage) {
+        const tools = document.getElementById("markup-tools");
+        if (tools) tools.hidden = true;
+        setMarkupSource("No print yet. Import a PDF or image here, or upload one on Intake.");
+      } else {
+        refreshMarkupChrome();
+      }
+      return;
+    }
+    if (printMarkup.loadedKey === fileKey(file) && printMarkup.pageImage) {
+      const tools = document.getElementById("markup-tools");
+      if (tools) tools.hidden = false;
+      setMarkupSource(markupSourceLine());
+      mirrorMarkupQuality();
+      refreshMarkupChrome();
+      return;
+    }
+    loadPrintForMarkup(file).catch(function (err) {
+      setMarkupStatus(err && err.message ? err.message : "Could not open that print.", true);
+    });
+  }
+
+  function openTakeoffScreen() {
+    initTakeoffFromEstimates();
+    renderTakeoff();
+    showScreen("takeoff");
+    renderMarkupPicker();
+    maybeLoadIntakePrint();
+  }
+
+  async function goMarkupPage(index) {
+    if (printMarkup.exporting) return;
+    if (printMarkup.kind !== "pdf" || !printMarkup.pdfDoc) return;
+    if (index < 0 || index >= printMarkup.pageCount || index === printMarkup.pageIndex) return;
+    const token = ++printMarkup.renderToken;
+    setMarkupStatus("Opening page " + (index + 1) + "…");
+    try {
+      const rendered = await renderPdfPageCanvas(printMarkup.pdfDoc, index);
+      if (token !== printMarkup.renderToken) return;
+      printMarkup.pageImage = rendered.canvas;
+      printMarkup.pageIndex = index;
+      setMarkupStatus("");
+      refreshMarkupChrome();
+    } catch (err) {
+      if (token !== printMarkup.renderToken) return;
+      setMarkupStatus(err && err.message ? err.message : "Could not open that page.", true);
+    }
+  }
+
+  function canvasToPngBytes(canvas) {
+    return new Promise(function (resolve, reject) {
+      canvas.toBlob(function (blob) {
+        if (!blob) {
+          reject(new Error("Could not encode the page image."));
+          return;
+        }
+        blob.arrayBuffer().then(function (buf) {
+          resolve(new Uint8Array(buf));
+        }).catch(reject);
+      }, "image/png");
+    });
+  }
+
+  async function embedRasterImage(out) {
+    // Export the canvas the rep clicked on so symbols land on the same picture,
+    // including phone photos the browser rotated for display.
+    const png = await canvasToPngBytes(printMarkup.pageImage);
+    return out.embedPng(png);
+  }
+
+  function pdfSafe(s) {
+    return String(s == null ? "" : s).replace(/[^\x20-\x7E]/g, "?");
+  }
+
+  function wrapPdfText(text, maxChars) {
+    const words = pdfSafe(text).split(/\s+/);
+    const lines = [];
+    let cur = "";
+    words.forEach(function (w) {
+      if (!w) return;
+      const next = cur ? cur + " " + w : w;
+      if (next.length > maxChars && cur) {
+        lines.push(cur);
+        cur = w;
+      } else {
+        cur = next;
+      }
+    });
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  function hexToPdfRgb(hex, rgb) {
+    const n = parseInt(String(hex).replace("#", ""), 16);
+    if (!Number.isFinite(n)) return rgb(0.96, 0.77, 0.09);
+    return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+  }
+
+  function drawLegendBand(page, pageIndex, pageCount, lines, font, fontBold, rgb, band) {
+    const width = page.getWidth();
+    page.drawRectangle({
+      x: 0,
+      y: 0,
+      width: width,
+      height: band,
+      color: rgb(0.96, 0.95, 0.91),
+    });
+    page.drawRectangle({
+      x: 0,
+      y: band - 2,
+      width: width,
+      height: 2,
+      color: rgb(0.77, 0.62, 0.04),
+    });
+    let y = band - 14;
+    page.drawText(pdfSafe("Page " + (pageIndex + 1) + " of " + pageCount + " - symbol legend"), {
+      x: 10,
+      y: y,
+      size: 10,
+      font: fontBold,
+      color: rgb(0.12, 0.12, 0.14),
+    });
+    y -= 14;
+    if (!lines.length) {
+      page.drawText("No devices marked on this page.", {
+        x: 10,
+        y: y,
+        size: 9,
+        font: font,
+        color: rgb(0.2, 0.2, 0.22),
+      });
+      return;
+    }
+    lines.forEach(function (line) {
+      page.drawCircle({
+        x: 18,
+        y: y + 3,
+        size: 5,
+        color: hexToPdfRgb(line.color, rgb),
+      });
+      page.drawText(pdfSafe(line.abbr + "  " + line.label + "  " + line.count), {
+        x: 28,
+        y: y,
+        size: 9,
+        font: font,
+        color: rgb(0.1, 0.1, 0.12),
+      });
+      y -= 14;
+    });
+  }
+
+  function drawPdfSymbols(page, pageIndex, drawW, drawH, band, fontBold, rgb) {
+    const markups = printMarkup.markups.filter(function (m) { return m.page === pageIndex; });
+    markups.forEach(function (m) {
+      const style = markupStyle(m.catalogId);
+      const r = Math.max(7, Math.min(13, Math.min(drawW, drawH) * 0.018));
+      const x = m.x * drawW;
+      const y = band + (1 - m.y) * drawH;
+      page.drawCircle({ x: x, y: y, size: r + 1.4, color: rgb(1, 1, 1) });
+      page.drawCircle({
+        x: x,
+        y: y,
+        size: r,
+        color: hexToPdfRgb(style.color, rgb),
+        borderWidth: 0.7,
+        borderColor: rgb(0, 0, 0),
+      });
+      let fontSize = r * (style.abbr.length > 1 ? 0.62 : 0.78);
+      let tw = fontBold.widthOfTextAtSize(style.abbr, fontSize);
+      while (fontSize > 5 && tw > r * 1.7) {
+        fontSize -= 0.4;
+        tw = fontBold.widthOfTextAtSize(style.abbr, fontSize);
+      }
+      const ink = textOn(style.color) === "#ffffff" ? rgb(1, 1, 1) : rgb(0.1, 0.1, 0.12);
+      page.drawText(style.abbr, {
+        x: x - tw / 2,
+        y: y - fontSize * 0.35,
+        size: fontSize,
+        font: fontBold,
+        color: ink,
+      });
+    });
+  }
+
+  function addLegendSummaryPages(out, font, fontBold, rgb) {
+    let page = out.addPage([612, 792]);
+    let y = 748;
+    function ensure(h) {
+      if (y - h < 48) {
+        page = out.addPage([612, 792]);
+        y = 748;
+      }
+    }
+    function line(text, size, bold, color) {
+      ensure(size + 6);
+      page.drawText(pdfSafe(text), {
+        x: 36,
+        y: y,
+        size: size,
+        font: bold ? fontBold : font,
+        color: color,
+      });
+      y -= size + 6;
+    }
+    line("PanelPath - marked prints", 16, true, rgb(0.1, 0.1, 0.12));
+    line("File: " + (printMarkup.fileName || "print"), 11, false, rgb(0.15, 0.15, 0.16));
+    line("Legend of symbols and counts per page. No prices, wire, or labor.", 10, false, rgb(0.2, 0.2, 0.22));
+    y -= 6;
+    const pageCount = printMarkup.pageCount || 1;
+    for (let i = 0; i < pageCount; i++) {
+      line("Page " + (i + 1), 12, true, rgb(0.1, 0.1, 0.12));
+      const lines = legendLines(markupCountsOnPage(i));
+      if (!lines.length) {
+        line("No devices marked on this page.", 10, false, rgb(0.25, 0.25, 0.27));
+      } else {
+        lines.forEach(function (ln) {
+          line(ln.abbr + "  " + ln.label + "  " + ln.count, 10, false, rgb(0.1, 0.1, 0.12));
+        });
+      }
+      y -= 4;
+    }
+    line("All pages", 12, true, rgb(0.1, 0.1, 0.12));
+    const allLines = legendLines(markupCountByCatalog());
+    if (!allLines.length) {
+      line("No devices marked.", 10, false, rgb(0.25, 0.25, 0.27));
+    } else {
+      allLines.forEach(function (ln) {
+        line(ln.abbr + "  " + ln.label + "  " + ln.count, 10, false, rgb(0.1, 0.1, 0.12));
+      });
+    }
+    y -= 8;
+    wrapPdfText(DISCLAIMER, 86).forEach(function (part) {
+      line(part, 9, false, rgb(0.25, 0.25, 0.27));
+    });
+  }
+
+  function downloadBytes(bytes, filename, mime) {
+    const blob = new Blob([bytes], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  async function exportMarkedPrints() {
+    if (!printMarkup.pageImage) {
+      setMarkupStatus("Import a print before exporting.", true);
+      return;
+    }
+    if (!window.PDFLib) {
+      setMarkupStatus("Export needs pdf-lib from the CDN. Check the network and reload.", true);
+      return;
+    }
+    const btn = document.getElementById("markup-export");
+    printMarkup.exporting = true;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Preparing PDF…";
+    }
+    try {
+      const PDFDocument = window.PDFLib.PDFDocument;
+      const StandardFonts = window.PDFLib.StandardFonts;
+      const rgb = window.PDFLib.rgb;
+      const out = await PDFDocument.create();
+      const font = await out.embedFont(StandardFonts.Helvetica);
+      const fontBold = await out.embedFont(StandardFonts.HelveticaBold);
+      const pageCount = printMarkup.pageCount || 1;
+      for (let i = 0; i < pageCount; i++) {
+        setMarkupStatus("Rendering page " + (i + 1) + " of " + pageCount + "…");
+        let embedded;
+        let viewW;
+        let viewH;
+        if (printMarkup.kind === "pdf") {
+          if (!printMarkup.pdfDoc) throw new Error("The PDF is no longer open. Import it again.");
+          const rendered = await renderPdfPageCanvas(printMarkup.pdfDoc, i);
+          const png = await canvasToPngBytes(rendered.canvas);
+          embedded = await out.embedPng(png);
+          viewW = rendered.width;
+          viewH = rendered.height;
+        } else {
+          embedded = await embedRasterImage(out);
+          viewW = embedded.width;
+          viewH = embedded.height;
+        }
+        const long = Math.max(viewW, viewH) || 1;
+        const fit = long > 1000 ? 1000 / long : 1;
+        const drawW = viewW * fit;
+        const drawH = viewH * fit;
+        const lines = legendLines(markupCountsOnPage(i));
+        const band = 30 + Math.max(1, lines.length) * 14;
+        const page = out.addPage([Math.max(drawW, 360), drawH + band]);
+        page.drawImage(embedded, { x: 0, y: band, width: drawW, height: drawH });
+        drawLegendBand(page, i, pageCount, lines, font, fontBold, rgb, band);
+        drawPdfSymbols(page, i, drawW, drawH, band, fontBold, rgb);
+      }
+      addLegendSummaryPages(out, font, fontBold, rgb);
+      const saved = await out.save();
+      downloadBytes(saved, "panelpath-marked-prints.pdf", "application/pdf");
+      setMarkupStatus("Downloaded panelpath-marked-prints.pdf.");
+    } catch (err) {
+      setMarkupStatus("Export failed: " + (err && err.message ? err.message : "unknown error"), true);
+    } finally {
+      printMarkup.exporting = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Download marked-up PDF";
+      }
+      updateMarkupNav();
+    }
+  }
+
+  function bindMarkupUi() {
+    const fileInput = document.getElementById("markup-file");
+    if (fileInput) {
+      fileInput.addEventListener("change", function (e) {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!f) return;
+        handlePrintFile(f);
+        loadPrintForMarkup(f).catch(function (err) {
+          setMarkupStatus(err && err.message ? err.message : "Could not open that print.", true);
+        });
+      });
+    }
+    const picker = document.getElementById("markup-device-picker");
+    if (picker) {
+      picker.addEventListener("click", function (e) {
+        const btn = e.target.closest("[data-markup-cat]");
+        if (!btn) return;
+        printMarkup.activeCatalogId = btn.getAttribute("data-markup-cat");
+        renderMarkupPicker();
+      });
+    }
+    const list = document.getElementById("markup-page-list");
+    if (list) {
+      list.addEventListener("click", function (e) {
+        const sel = e.target.closest("[data-markup-select]");
+        if (sel) {
+          printMarkup.selectedId = sel.getAttribute("data-markup-select");
+          redrawPrintMarkup();
+          renderMarkupPlacedList();
+          setMarkupStatus("");
+          return;
+        }
+        const rm = e.target.closest("[data-markup-remove]");
+        if (rm) removeMarkupById(rm.getAttribute("data-markup-remove"));
+      });
+    }
+    const prev = document.getElementById("markup-prev");
+    const next = document.getElementById("markup-next");
+    if (prev) prev.addEventListener("click", function () { goMarkupPage(printMarkup.pageIndex - 1); });
+    if (next) next.addEventListener("click", function () { goMarkupPage(printMarkup.pageIndex + 1); });
+    const removeBtn = document.getElementById("markup-remove");
+    if (removeBtn) {
+      removeBtn.addEventListener("click", function () {
+        if (!printMarkup.selectedId) {
+          setMarkupStatus("Select a symbol on the page first.", true);
+          return;
+        }
+        removeMarkupById(printMarkup.selectedId);
+      });
+    }
+    const exportBtn = document.getElementById("markup-export");
+    if (exportBtn) exportBtn.addEventListener("click", function () { exportMarkedPrints(); });
+    const canvas = document.getElementById("markup-canvas");
+    let lastPlaceAt = 0;
+    let lastPlaceX = -1;
+    let lastPlaceY = -1;
+    if (canvas) {
+      canvas.addEventListener("click", function (e) {
+        if (printMarkup.exporting || !printMarkup.pageImage) return;
+        const norm = canvasNorm(e);
+        if (!norm) return;
+        const hit = hitMarkup(norm, printMarkup.pageIndex);
+        if (hit) {
+          printMarkup.selectedId = hit.id;
+          redrawPrintMarkup();
+          renderMarkupPlacedList();
+          setMarkupStatus("");
+          return;
+        }
+        const now = Date.now();
+        if (now - lastPlaceAt < 280 && Math.abs(norm.x - lastPlaceX) < 0.01 && Math.abs(norm.y - lastPlaceY) < 0.01) {
+          return;
+        }
+        lastPlaceAt = now;
+        lastPlaceX = norm.x;
+        lastPlaceY = norm.y;
+        placeMarkup(norm);
+      });
+    }
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (!printMarkup.selectedId) return;
+      const t = e.target;
+      if (t && t.closest && t.closest("input, textarea, select")) return;
+      const screen = document.getElementById("screen-takeoff");
+      if (!screen || screen.hidden) return;
+      e.preventDefault();
+      removeMarkupById(printMarkup.selectedId);
+    });
+  }
+
+  bindMarkupUi();
+
+
   function revokePrintUrl() {
     if (printState.objectUrl) {
       try { URL.revokeObjectURL(printState.objectUrl); } catch (_) {}
@@ -2080,6 +3022,7 @@
 
   function handlePrintFile(file) {
     revokePrintUrl();
+    printState.file = file || null;
     printState.fileName = file ? file.name : "";
     printState.fileType = file ? file.type || "" : "";
     printState.longEdge = 0;
@@ -2117,7 +3060,7 @@
       printState.fileType = "application/pdf";
       img.hidden = true;
       canvas.hidden = true;
-      label.textContent = "PDF accepted — confirm pages are readable. (v1 does not auto-render every page.)";
+      label.textContent = "PDF accepted — confirm pages are readable. Open Takeoff to view every page and mark devices.";
       pdfConfirm.hidden = false;
       printState.pdfAcceptedNote = true;
       setPrintQualityMsg("PDF accepted — confirm pages are readable.", true);
@@ -2183,6 +3126,7 @@
       printState.looksReadable = !!e.target.checked;
       if (e.target.checked) printState.notReadable = false;
       document.getElementById("print-not-readable-note").hidden = true;
+      mirrorMarkupQuality();
     }
   });
 
@@ -2200,6 +3144,7 @@
     if (form.elements.pdfLooksReadable) form.elements.pdfLooksReadable.checked = false;
     document.getElementById("print-not-readable-note").hidden = false;
     setPrintQualityMsg(PRINT_NOT_READABLE_MSG, false);
+    mirrorMarkupQuality();
   });
 
   form.addEventListener("submit", (e) => {
@@ -2220,6 +3165,9 @@
     state.intake = intake;
     state.takeoff = { devices: [], wire: [], initialized: false };
     try { sessionStorage.removeItem(TAKEOFF_KEY); } catch (_) {}
+    printMarkup.markups = [];
+    printMarkup.selectedId = null;
+    refreshMarkupChrome();
     try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(intake)); } catch (_) {}
     goResults();
   });
@@ -2278,9 +3226,7 @@
   const btnTakeoff = document.getElementById("btn-takeoff");
   if (btnTakeoff) {
     btnTakeoff.addEventListener("click", () => {
-      initTakeoffFromEstimates();
-      renderTakeoff();
-      showScreen("takeoff");
+      openTakeoffScreen();
     });
   }
   const btnTakeoffBack = document.getElementById("btn-takeoff-back");
@@ -2301,9 +3247,7 @@
   const btnSummaryBackTakeoff = document.getElementById("btn-summary-back-takeoff");
   if (btnSummaryBackTakeoff) {
     btnSummaryBackTakeoff.addEventListener("click", () => {
-      initTakeoffFromEstimates();
-      renderTakeoff();
-      showScreen("takeoff");
+      openTakeoffScreen();
     });
   }
 
@@ -2331,7 +3275,14 @@
   } catch (_) {}
   try {
     const traw = sessionStorage.getItem(TAKEOFF_KEY);
-    if (traw) state.takeoff = JSON.parse(traw);
+    if (traw) {
+      state.takeoff = JSON.parse(traw);
+      // Symbols live only in this page session. After a refresh the lock is gone;
+      // the qty number stays as a manual line until a print is marked again.
+      if (state.takeoff && state.takeoff.devices) {
+        state.takeoff.devices.forEach(function (row) { row.fromMarkup = false; });
+      }
+    }
   } catch (_) {}
 
   showScreen(1);
